@@ -5,7 +5,6 @@ namespace App\Http\Controllers;
 use App\Models\Continent;
 use App\Models\Nation;
 use App\Services\CsvReader;
-use App\Support\ImportReportingTrait;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
@@ -14,12 +13,6 @@ use Throwable;
 
 class NationImportController extends Controller
 {
-    use ImportReportingTrait;
-
-    private const ROUTE_IMPORT_SHOW = 'nations.import.show';
-
-    private const REPORT_TITLE = 'Nations CSV import finished.';
-
     private const REQUIRED_HEADERS = ['nameEn'];
 
     public function show()
@@ -35,22 +28,13 @@ class NationImportController extends Controller
             'strict_unique' => ['nullable'],
         ]);
 
-        $truncate = $request->boolean('truncate');
-        $strictUnique = $request->boolean('strict_unique');
-
-        $token = Str::uuid()->toString();
+        $token = (string) Str::uuid();
         $path = $request->file('csv')->storeAs('imports', "nations_{$token}.csv");
 
         $abs = Storage::path($path);
         $data = $csv->readAuto($abs);
 
-        $issues = [];
-        $this->validateHeaders($data['headers'], $issues);
-
-        if (count($data['rows']) === 0) {
-            $this->addIssue($issues, 'warning', 'empty_file', 'CSV contains no data rows.');
-        }
-
+        $issues = $this->validateHeaders($data['headers']);
         $previewRows = array_slice($data['rows'], 0, 20);
 
         return view('nations.import_preview', [
@@ -60,26 +44,26 @@ class NationImportController extends Controller
             'headers' => $data['headers'],
             'previewRows' => $previewRows,
             'totalRows' => count($data['rows']),
+            'truncate' => $request->boolean('truncate'),
+            'strictUnique' => $request->boolean('strict_unique'),
             'issues' => $issues,
-
-            // unified keys
-            'truncate' => $truncate,
-            'strictUnique' => $strictUnique,
         ]);
     }
 
-    private function validateHeaders(array $headers, array &$issues): void
+    private function validateHeaders(array $headers): array
     {
         $missing = array_values(array_diff(self::REQUIRED_HEADERS, $headers));
-
-        if (! empty($missing)) {
-            $this->addIssue(
-                $issues,
-                'error',
-                'missing_headers',
-                'Missing required columns: '.implode(', ', $missing)
-            );
+        if (! $missing) {
+            return [];
         }
+
+        return [
+            [
+                'level' => 'error',
+                'code' => 'MISSING_HEADERS',
+                'message' => 'Missing required columns: '.implode(', ', $missing),
+            ],
+        ];
     }
 
     public function commit(Request $request, CsvReader $csv)
@@ -91,44 +75,49 @@ class NationImportController extends Controller
             'strict_unique' => ['nullable'],
         ]);
 
+        $path = $request->input('storagePath');
+
+        if (! Storage::exists($path)) {
+            return redirect()->route('nations.import.show')
+                ->with('import_status', 'error')
+                ->with('import_summary', [
+                    'title' => 'Import file not found (expired). Please upload again.',
+                    'inserted' => 0,
+                    'updated' => 0,
+                    'skipped' => 0,
+                ])
+                ->with('import_issues', []);
+        }
+
         $truncate = $request->boolean('truncate');
         $strictUnique = $request->boolean('strict_unique');
 
-        $path = $request->input('storagePath');
-        if (! Storage::exists($path)) {
-            $issues = [];
-            $this->addIssue($issues, 'error', 'file_missing', 'Import file not found (expired). Please upload again.');
-
-            $summary = $this->buildSummary(self::REPORT_TITLE, 0, 0, 0);
-
-            return $this->redirectWithImportReport(self::ROUTE_IMPORT_SHOW, $summary, $issues, 'error');
-        }
-
-        $abs = Storage::path($path);
+        $inserted = 0;
+        $updated = 0;
+        $skipped = 0;
+        $issues = [];
 
         try {
-            $data = $csv->readAuto($abs);
-
+            $data = $csv->readAuto(Storage::path($path));
             $continentCodeToId = Continent::query()->pluck('id', 'code')->toArray();
 
-            $inserted = 0;
-            $updated = 0;
-            $skipped = 0;
-
-            $rowIssues = []; // structured issues from row-level problems
-
             DB::transaction(function () use (
-                $truncate,
-                $strictUnique,
                 $data,
                 $continentCodeToId,
+                $truncate,
+                $strictUnique,
                 &$inserted,
                 &$updated,
                 &$skipped,
-                &$rowIssues
+                &$issues
             ) {
                 if ($truncate) {
-                    $this->truncateNationsAndRegions();
+                    DB::statement('PRAGMA foreign_keys=OFF');
+                    if (DB::getSchemaBuilder()->hasTable('regions')) {
+                        DB::table('regions')->delete();
+                    }
+                    DB::table('nations')->delete();
+                    DB::statement('PRAGMA foreign_keys=ON');
                 }
 
                 foreach ($data['rows'] as $idx => $row) {
@@ -137,24 +126,27 @@ class NationImportController extends Controller
                     $nameEn = $row['nameEn'] ?? null;
                     if (! $nameEn) {
                         $skipped++;
-                        $this->addIssue($rowIssues, 'warning', 'missing_nameEn', "Line $line: missing nameEn");
+                        $issues[] = [
+                            'level' => 'warning',
+                            'code' => 'MISSING_NAMEEN',
+                            'message' => "Line {$line}: missing nameEn",
+                        ];
 
                         continue;
                     }
 
-                    $iso3 = $row['iso3'] ?? null;
                     $iso2 = $row['iso2'] ?? null;
+                    $iso3 = $row['iso3'] ?? null;
 
                     $continentId = null;
                     if (! empty($row['continent_code'])) {
                         $continentId = $continentCodeToId[$row['continent_code']] ?? null;
                         if (! $continentId) {
-                            $this->addIssue(
-                                $rowIssues,
-                                'warning',
-                                'unknown_continent_code',
-                                "Line $line: unknown continent_code '{$row['continent_code']}'"
-                            );
+                            $issues[] = [
+                                'level' => 'warning',
+                                'code' => 'UNKNOWN_CONTINENT',
+                                'message' => "Line {$line}: unknown continent_code '{$row['continent_code']}'",
+                            ];
                         }
                     }
 
@@ -176,29 +168,36 @@ class NationImportController extends Controller
                         'isIndependent' => $row['isIndependent'] ?? null,
                     ];
 
-                    $conflictFields = $this->findUniqueConflicts($payload, $match);
+                    // UNIQUE checks
+                    $conflicts = [];
+                    foreach (['ioc', 'iso2', 'iso3'] as $f) {
+                        if (empty($payload[$f])) {
+                            continue;
+                        }
 
-                    if ($conflictFields) {
+                        $q = Nation::where($f, $payload[$f]);
+                        foreach ($match as $k => $v) {
+                            $q->where($k, '!=', $v);
+                        }
+                        if ($q->exists()) {
+                            $conflicts[] = $f;
+                        }
+                    }
+
+                    if ($conflicts) {
                         if ($strictUnique) {
                             $skipped++;
-                            $this->addIssue(
-                                $rowIssues,
-                                'warning',
-                                'unique_conflict',
-                                "Line $line: UNIQUE conflict on ".implode(', ', $conflictFields)
-                            );
+                            $issues[] = [
+                                'level' => 'warning',
+                                'code' => 'UNIQUE_CONFLICT',
+                                'message' => "Line {$line}: UNIQUE conflict on ".implode(', ', $conflicts),
+                            ];
 
                             continue;
                         }
-                        foreach ($conflictFields as $f) {
+                        foreach ($conflicts as $f) {
                             $payload[$f] = null;
                         }
-                        $this->addIssue(
-                            $rowIssues,
-                            'info',
-                            'unique_conflict_nullified',
-                            "Line $line: UNIQUE conflict on ".implode(', ', $conflictFields).' (fields set to null)'
-                        );
                     }
 
                     $existing = Nation::where($match)->first();
@@ -212,20 +211,24 @@ class NationImportController extends Controller
                 }
             });
 
-            $summary = $this->buildSummary(self::REPORT_TITLE, $inserted, $updated, $skipped);
-            $status = $this->computeStatus($rowIssues, $skipped);
-
-            return $this->redirectWithImportReport(self::ROUTE_IMPORT_SHOW, $summary, $rowIssues, $status);
-
         } catch (Throwable $e) {
             report($e);
 
-            $issues = [];
-            $this->addIssue($issues, 'error', 'exception', $e->getMessage());
-
-            $summary = $this->buildSummary(self::REPORT_TITLE, 0, 0, 0);
-
-            return $this->redirectWithImportReport(self::ROUTE_IMPORT_SHOW, $summary, $issues, 'error');
+            return redirect()->route('nations.import.show')
+                ->with('import_status', 'error')
+                ->with('import_summary', [
+                    'title' => 'Import failed',
+                    'inserted' => 0,
+                    'updated' => 0,
+                    'skipped' => 0,
+                ])
+                ->with('import_issues', [
+                    [
+                        'level' => 'error',
+                        'code' => 'EXCEPTION',
+                        'message' => $e->getMessage(),
+                    ],
+                ]);
 
         } finally {
             try {
@@ -234,44 +237,19 @@ class NationImportController extends Controller
                 report($e);
             }
         }
-    }
 
-    private function truncateNationsAndRegions(): void
-    {
-        DB::statement('PRAGMA foreign_keys=OFF');
+        $status = count(array_filter($issues, fn ($i) => $i['level'] === 'error'))
+            ? 'error'
+            : (count($issues) ? 'warning' : 'success');
 
-        if (DB::getSchemaBuilder()->hasTable('regions')) {
-            DB::table('regions')->delete();
-        }
-
-        DB::table('nations')->delete();
-
-        if (DB::getSchemaBuilder()->hasTable('sqlite_sequence')) {
-            DB::table('sqlite_sequence')->where('name', 'nations')->delete();
-        }
-
-        DB::statement('PRAGMA foreign_keys=ON');
-    }
-
-    private function findUniqueConflicts(array $payload, array $match): array
-    {
-        $conflicts = [];
-
-        foreach (['ioc', 'iso2', 'iso3'] as $field) {
-            if (empty($payload[$field])) {
-                continue;
-            }
-
-            $q = Nation::where($field, $payload[$field]);
-            foreach ($match as $k => $v) {
-                $q->where($k, '!=', $v);
-            }
-
-            if ($q->exists()) {
-                $conflicts[] = $field;
-            }
-        }
-
-        return $conflicts;
+        return redirect()->route('nations.import.show')
+            ->with('import_status', $status)
+            ->with('import_summary', [
+                'title' => 'Nations CSV import finished.',
+                'inserted' => $inserted,
+                'updated' => $updated,
+                'skipped' => $skipped,
+            ])
+            ->with('import_issues', $issues);
     }
 }

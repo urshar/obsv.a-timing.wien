@@ -11,28 +11,28 @@ class RegionController extends Controller
     public function index(Request $request)
     {
         $q = trim((string) $request->query('q', ''));
-        $nationId = $request->query('nation_id');
-
-        $nations = Nation::orderBy('nameEn')->get();
 
         $regions = Region::query()
             ->with('nation')
-            ->when($nationId, fn ($query) => $query->where('nation_id', $nationId))
             ->when($q !== '', function ($query) use ($q) {
                 $query->where(function ($qq) use ($q) {
-                    $qq->where('nameEn', 'like', "%$q%")
-                        ->orWhere('nameDe', 'like', "%$q%")
-                        ->orWhere('lsvCode', 'like', "%$q%")
-                        ->orWhere('bsvCode', 'like', "%$q%")
-                        ->orWhere('isoSubRegionCode', 'like', "%$q%")
-                        ->orWhere('abbreviation', 'like', "%$q%");
-                });
+                    $qq->where('nameEn', 'like', "%{$q}%")
+                        ->orWhere('nameDe', 'like', "%{$q}%")
+                        ->orWhere('abbreviation', 'like', "%{$q}%")
+                        ->orWhere('lsvCode', 'like', "%{$q}%")
+                        ->orWhere('bsvCode', 'like', "%{$q}%")
+                        ->orWhere('isoSubRegionCode', 'like', "%{$q}%");
+                })
+                    ->orWhereHas('nation', function ($nq) use ($q) {
+                        $nq->where('nameEn', 'like', "%{$q}%")
+                            ->orWhere('iso2', 'like', "%{$q}%");
+                    });
             })
             ->orderBy('nameEn')
-            ->paginate(25)
-            ->appends($request->query());
+            ->paginate(20)
+            ->withQueryString();
 
-        return view('regions.index', compact('regions', 'nations', 'q', 'nationId'));
+        return view('regions.index', compact('regions', 'q'));
     }
 
     public function store(Request $request)

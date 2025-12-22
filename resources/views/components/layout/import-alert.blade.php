@@ -1,6 +1,6 @@
 @if(session('import_summary'))
     @php
-        $status = session('import_status', 'success'); // success|warning|error
+        $status = session('import_status', 'success');
         $summary = session('import_summary', []);
         $issues = session('import_issues', []);
 
@@ -12,13 +12,6 @@
         $cls = $map[$status] ?? $map['success'];
 
         $title = $summary['title'] ?? 'Import result';
-
-        $badge = match($status) {
-            'error' => 'bg-rose-100 text-rose-900',
-            'warning' => 'bg-amber-100 text-amber-900',
-            default => 'bg-emerald-100 text-emerald-900',
-        };
-
         $inserted = (int)($summary['inserted'] ?? 0);
         $updated  = (int)($summary['updated'] ?? 0);
         $skipped  = (int)($summary['skipped'] ?? 0);
@@ -44,11 +37,9 @@
                 </div>
             </div>
 
-            <span class="inline-flex items-center rounded-md px-2.5 py-1 text-xs font-semibold {{ $badge }}">
-                {{ strtoupper($status) }}
-            </span>
+            <x-ui.badge :level="$status">{{ strtoupper($status) }}</x-ui.badge>
         </div>
 
-        @include('imports._issue_list', ['issues' => $issues, 'title' => 'Issues'])
+        <x-import.issue-list :issues="$issues" title="Issues"/>
     </div>
 @endif

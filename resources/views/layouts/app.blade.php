@@ -9,16 +9,16 @@
 </head>
 <body class="bg-slate-50 text-slate-900">
 <div class="min-h-screen">
-    @include('layouts._header')
+    <x-layout.header/>
 
     <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        @include('layouts._import_alert')
-        @include('layouts._validation_errors')
+        <x-layout.import-alert/>
+        <x-layout.validation-errors/>
 
         @yield('content')
     </main>
 
-    @include('layouts._footer')
+    <x-layout.footer/>
 </div>
 </body>
 </html>

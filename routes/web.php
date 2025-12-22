@@ -7,18 +7,20 @@ use App\Http\Controllers\RegionController;
 use App\Http\Controllers\RegionImportController;
 use Illuminate\Support\Facades\Route;
 
-Route::get('/', function () {
-    return view('welcome');
+Route::get('/', fn () => view('welcome'));
+
+Route::prefix('nations/import')->name('nations.import.')->group(function () {
+    Route::get('/', [NationImportController::class, 'show'])->name('show');
+    Route::post('/preview', [NationImportController::class, 'preview'])->name('preview');
+    Route::post('/commit', [NationImportController::class, 'commit'])->name('commit');
+});
+
+Route::prefix('regions/import')->name('regions.import.')->group(function () {
+    Route::get('/', [RegionImportController::class, 'show'])->name('show');
+    Route::post('/preview', [RegionImportController::class, 'preview'])->name('preview');
+    Route::post('/commit', [RegionImportController::class, 'commit'])->name('commit');
 });
 
 Route::resource('continents', ContinentController::class);
-
-Route::resource('nations', NationController::class);
-Route::get('nations/import', [NationImportController::class, 'show'])->name('nations.import.show');
-Route::post('nations/import/preview', [NationImportController::class, 'preview'])->name('nations.import.preview');
-Route::post('nations/import/commit', [NationImportController::class, 'commit'])->name('nations.import.commit');
-
-Route::resource('regions', RegionController::class);
-Route::get('regions/import', [RegionImportController::class, 'show'])->name('regions.import.show');
-Route::post('regions/import/preview', [RegionImportController::class, 'preview'])->name('regions.import.preview');
-Route::post('regions/import/commit', [RegionImportController::class, 'commit'])->name('regions.import.commit');
+Route::resource('nations', NationController::class)->except(['show']);
+Route::resource('regions', RegionController::class)->except(['show']);

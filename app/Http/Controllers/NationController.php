@@ -13,26 +13,33 @@ class NationController extends Controller
         $q = trim((string) $request->query('q', ''));
         $continentId = $request->query('continent_id');
 
-        $continents = Continent::orderBy('nameEn')->get();
-
         $nations = Nation::query()
             ->with('continent')
-            ->when($continentId, fn ($query) => $query->where('continent_id', $continentId))
             ->when($q !== '', function ($query) use ($q) {
                 $query->where(function ($qq) use ($q) {
-                    $qq->where('nameEn', 'like', "%$q%")
-                        ->orWhere('nameDe', 'like', "%$q%")
-                        ->orWhere('ioc', 'like', "%$q%")
-                        ->orWhere('iso2', 'like', "%$q%")
-                        ->orWhere('iso3', 'like', "%$q%")
-                        ->orWhere('tld', 'like', "%$q%");
+                    $qq->where('nameEn', 'like', "%{$q}%")
+                        ->orWhere('nameDe', 'like', "%{$q}%")
+                        ->orWhere('iso2', 'like', "%{$q}%")
+                        ->orWhere('iso3', 'like', "%{$q}%")
+                        ->orWhere('ioc', 'like', "%{$q}%");
                 });
             })
+            ->when($continentId, function ($query) use ($continentId) {
+                $query->where('continent_id', $continentId);
+            })
             ->orderBy('nameEn')
-            ->paginate(25)
-            ->appends($request->query());
+            ->paginate(20)
+            ->withQueryString();
 
-        return view('nations.index', compact('nations', 'continents', 'q', 'continentId'));
+        // Für Dropdown
+        $continents = Continent::orderBy('nameEn')->get();
+
+        return view('nations.index', [
+            'nations' => $nations,
+            'continents' => $continents,
+            'q' => $q,
+            'continentId' => $continentId,
+        ]);
     }
 
     public function store(Request $request)
