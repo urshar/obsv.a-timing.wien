@@ -3,11 +3,12 @@
 use App\Http\Controllers\ContinentController;
 use App\Http\Controllers\NationController;
 use App\Http\Controllers\NationImportController;
+use App\Http\Controllers\ParaSwimStyleAdminController;
 use App\Http\Controllers\RegionController;
 use App\Http\Controllers\RegionImportController;
 use Illuminate\Support\Facades\Route;
 
-Route::get('/', fn () => view('welcome'));
+Route::get('/', fn () => view('welcome'))->name('home');
 
 Route::prefix('nations/import')->name('nations.import.')->group(function () {
     Route::get('/', [NationImportController::class, 'show'])->name('show');
@@ -24,3 +25,5 @@ Route::prefix('regions/import')->name('regions.import.')->group(function () {
 Route::resource('continents', ContinentController::class);
 Route::resource('nations', NationController::class)->except(['show']);
 Route::resource('regions', RegionController::class)->except(['show']);
+
+Route::resource('para-swim-styles', ParaSwimStyleAdminController::class)->except(['show']);

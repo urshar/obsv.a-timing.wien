@@ -6,7 +6,9 @@
                     SA
                 </div>
                 <div>
-                    <div class="text-lg font-semibold leading-tight">sport.a-timing.wien</div>
+                    <div class="text-lg font-semibold leading-tight"><a href="{{ route('home') }}">
+                            sport.a-timing.wien</a>
+                    </div>
                     <div class="text-sm text-slate-500">Admin</div>
                 </div>
             </div>
@@ -27,13 +29,9 @@
 
                 <div class="w-px h-6 bg-slate-200 mx-1"></div>
 
-                <a href="{{ route('nations.import.show') }}"
-                   class="px-3 py-2 rounded-lg text-sm font-medium hover:bg-slate-100 {{ request()->routeIs('nations.import.*') ? 'bg-slate-900 text-white hover:bg-slate-900' : '' }}">
-                    Import Nations
-                </a>
-                <a href="{{ route('regions.import.show') }}"
-                   class="px-3 py-2 rounded-lg text-sm font-medium hover:bg-slate-100 {{ request()->routeIs('regions.import.*') ? 'bg-slate-900 text-white hover:bg-slate-900' : '' }}">
-                    Import Regions
+                <a href="{{ route('para-swim-styles.index') }}"
+                   class="px-3 py-2 rounded-lg text-sm font-medium hover:bg-slate-100 {{ request()->routeIs('para-swim-styles.*') ? 'bg-slate-900 text-white hover:bg-slate-900' : '' }}">
+                    Para Swim Styles
                 </a>
             </nav>
         </div>

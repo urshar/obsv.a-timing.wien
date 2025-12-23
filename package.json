@@ -7,6 +7,7 @@
         "dev": "vite"
     },
     "devDependencies": {
+        "@tailwindcss/cli": "^4.1.18",
         "@tailwindcss/vite": "^4.1.18",
         "axios": "^1.13.2",
         "concurrently": "^9.2.1",
