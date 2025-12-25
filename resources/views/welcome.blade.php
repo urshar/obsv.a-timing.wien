@@ -2,12 +2,37 @@
 @section('title','Admin Dashboard')
 
 @section('content')
+    @php
+        $lenexUploadRoute = collect([
+            'imports.lenex.upload',
+            'imports.lenex.show',
+            'imports.lenex.create',
+            'imports.lenex.index',
+        ])->first(fn ($r) => \Illuminate\Support\Facades\Route::has($r));
+    @endphp
+
     <x-ui.page-title
         title="Admin Dashboard"
         subtitle="Manage master data and imports."
     />
 
     <div class="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+        {{-- LENEX Import --}}
+        @if ($lenexUploadRoute)
+            <x-ui.card>
+                <x-ui.card-header title="LENEX Import" subtitle="Import von .lef/.lxf/.xml"/>
+                <x-ui.card-body>
+                    <p class="text-sm text-slate-600">
+                        LENEX-Datei hochladen, Vorschau prüfen und anschließend importieren.
+                    </p>
+                </x-ui.card-body>
+                <x-ui.card-footer class="flex justify-end">
+                    <a href="{{ route($lenexUploadRoute) }}">
+                        <x-ui.button>Open</x-ui.button>
+                    </a>
+                </x-ui.card-footer>
+            </x-ui.card>
+        @endif
 
         {{-- Continents --}}
         <x-ui.card>
@@ -88,6 +113,12 @@
                     <a href="{{ route('regions.import.show') }}">
                         <x-ui.button variant="secondary" class="w-full justify-center">Import Regions</x-ui.button>
                     </a>
+                    @if ($lenexUploadRoute)
+                        <a href="{{ route($lenexUploadRoute) }}">
+                            <x-ui.button variant="secondary" class="w-full justify-center">LENEX Import</x-ui.button>
+                        </a>
+                    @endif
+
                 </div>
             </x-ui.card-body>
         </x-ui.card>
