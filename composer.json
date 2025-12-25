@@ -13,7 +13,9 @@
         "laravel/framework": "^12.0",
         "laravel/tinker": "^2.10.1",
         "ext-simplexml": "*",
-        "ext-libxml": "*"
+        "ext-libxml": "*",
+        "ext-zip": "*",
+        "ext-zlib": "*"
     },
     "require-dev": {
         "fakerphp/faker": "^1.23",

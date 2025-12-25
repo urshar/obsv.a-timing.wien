@@ -4,7 +4,9 @@ namespace App\Http\Controllers;
 
 use App\Models\ImportBatch;
 use App\Models\ImportMapping;
+use App\Rules\LenexFile;
 use App\Services\Lenex\LenexImportService;
+use App\Support\Lenex\LenexUploadReader;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Throwable;
@@ -22,17 +24,21 @@ class LenexImportController extends Controller
     public function store(Request $request, LenexImportService $service)
     {
         $request->validate([
-            'lenex_file' => ['required', 'file', 'mimes:lef,lxf,xml', 'max:20480'],
+            'lenex_file' => ['required', 'file', 'max:20480', new LenexFile],
             'forced_type' => ['nullable', 'in:meet_structure,entries,results,records'],
         ]);
 
         $file = $request->file('lenex_file');
         $filename = $file->getClientOriginalName();
-        $xmlString = file_get_contents($file->getRealPath());
 
-        $batch = $service->createPreviewFromUpload($filename, $xmlString, $request->input('forced_type'));
+        $xmlString = LenexUploadReader::toXmlString($file);
 
-        // store XML in local storage for commit step
+        $batch = $service->createPreviewFromUpload(
+            $filename,
+            $xmlString,
+            $request->input('forced_type')
+        );
+
         $path = "imports/lenex/batch_{$batch->id}.xml";
         Storage::disk('local')->put($path, $xmlString);
 

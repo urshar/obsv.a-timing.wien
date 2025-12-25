@@ -47,6 +47,7 @@
                         type="file"
                         name="lenex_file"
                         required
+                        accept=".lef,.lxf,.xml,application/xml,text/xml"
                         class="mt-2 block w-full rounded-xl border border-slate-300 bg-white text-sm file:mr-4 file:rounded-xl file:border-0 file:bg-slate-900 file:px-4 file:py-2 file:text-white hover:file:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-300"
                     />
                     <p class="mt-1 text-xs text-slate-500">Erlaubt: .lef, .lxf, .xml</p>

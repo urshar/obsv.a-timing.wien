@@ -94,7 +94,7 @@ class LenexImportService
     |--------------------------------------------------------------------------
     */
 
-    private function extractMeetSummary(SimpleXMLElement $xml): array
+    public function extractMeetSummary(SimpleXMLElement $xml): array
     {
         $meetNode = ($xml->xpath('//MEET')[0] ?? null);
         if (! $meetNode instanceof SimpleXMLElement) {
@@ -102,8 +102,24 @@ class LenexImportService
         }
 
         $name = $this->strAttrNullable($meetNode, 'name') ?? LenexXml::text($meetNode->NAME ?? null);
+
+        // LENEX: Datum kann je nach Export in date / from / datefrom stehen
+        $date = $this->strAttrNullable($meetNode, 'date');
         $from = $this->strAttrNullable($meetNode, 'from') ?? $this->strAttrNullable($meetNode, 'datefrom');
         $to = $this->strAttrNullable($meetNode, 'to') ?? $this->strAttrNullable($meetNode, 'dateto');
+
+        // Wenn "from" fehlt, nimm "date"
+        if (! $from && $date) {
+            $from = $date;
+        }
+
+        // Fallback: wenn MEET kein Datum hat, nimm erstes SESSION@date
+        if (! $from) {
+            $sessionNode = ($meetNode->xpath('.//SESSION[@date][1]')[0] ?? null);
+            if ($sessionNode instanceof SimpleXMLElement) {
+                $from = $this->strAttrNullable($sessionNode, 'date');
+            }
+        }
 
         $city = null;
         $facilityNode = ($meetNode->xpath('.//FACILITY[1]')[0] ?? null);

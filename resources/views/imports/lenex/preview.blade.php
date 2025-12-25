@@ -1,3 +1,4 @@
+@php use Carbon\Carbon; @endphp
 @extends('layouts.app')
 
 @php
@@ -58,10 +59,47 @@
                             <span class="ml-2">{{ $meet['name'] ?? '—' }}</span>
                         </div>
 
-                        <div class="text-sm text-slate-500">
-                            {{ $meet['from'] ?? '—' }} → {{ $meet['to'] ?? '—' }}
-                            @if (!empty($meet['city']))
-                                · {{ $meet['city'] }}
+                        @php
+                            $from = data_get($meet, 'from');
+                            $to   = data_get($meet, 'to');
+                            $city = data_get($meet, 'city');
+
+                            $fmt = function ($v) {
+                                if (!$v) return null;
+                                try {
+                                    return Carbon::parse($v)->format('d.m.Y');
+                                } catch (Throwable $e) {
+                                    return (string) $v;
+                                }
+                            };
+
+                            $fromFmt = $fmt($from);
+                            $toFmt   = $fmt($to);
+
+                            $dateLabel = null;
+                            if ($fromFmt && $toFmt && $fromFmt !== $toFmt) {
+                                $dateLabel = "{$fromFmt} – {$toFmt}";
+                            } elseif ($fromFmt) {
+                                $dateLabel = $fromFmt;
+                            }
+                        @endphp
+
+                        <div class="text-sm text-slate-500 flex flex-wrap items-center gap-x-2 gap-y-1">
+                            @if($dateLabel)
+                                <span
+                                    class="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700">
+                                    {{ $dateLabel }}
+                                </span>
+                            @else
+                                <span
+                                    class="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 ring-1 ring-inset ring-amber-200">
+                                    No meet date in LENEX
+                                </span>
+                            @endif
+
+                            @if(!empty($city))
+                                <span class="text-slate-400">•</span>
+                                <span>{{ $city }}</span>
                             @endif
                         </div>
 
