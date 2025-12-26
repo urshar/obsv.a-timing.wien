@@ -8,6 +8,7 @@ use App\Rules\LenexFile;
 use App\Services\Lenex\LenexImportService;
 use App\Support\Lenex\LenexUploadReader;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Throwable;
 
@@ -112,5 +113,72 @@ class LenexImportController extends Controller
         $service->commit($batch, $xmlString);
 
         return redirect()->route('imports.lenex.preview', $batch)->with('status', 'Import committed.');
+    }
+
+    /**
+     * @throws Throwable
+     */
+    public function abort(ImportBatch $batch, LenexImportService $service)
+    {
+        abort_unless($batch->status === 'preview', 409, 'Only preview batches can be aborted.');
+
+        DB::transaction(function () use ($batch, $service) {
+            $service->abortBatch($batch); // kapselt status + cleanup
+        });
+
+        return redirect()
+            ->route('imports.lenex.create')
+            ->with('status', 'Import batch aborted and cleaned up.');
+    }
+
+    public function history(Request $request)
+    {
+        $q = trim((string) $request->query('q', ''));
+        $type = trim((string) $request->query('type', ''));
+        $perPage = (int) $request->query('per_page', 20);
+        $perPage = in_array($perPage, [10, 20, 50, 100], true) ? $perPage : 20;
+
+        // Für Dropdown: nur Typen, die es wirklich in committed gibt
+        $types = ImportBatch::query()
+            ->where('status', 'committed')
+            ->whereNotNull('type')
+            ->distinct()
+            ->orderBy('type')
+            ->pluck('type')
+            ->values();
+
+        $batches = ImportBatch::query()
+            ->where('status', 'committed')
+            ->when($type !== '', fn ($query) => $query->where('type', $type))
+            ->when($q !== '', function ($query) use ($q) {
+                $query->where(function ($sub) use ($q) {
+                    $sub->where('filename', 'like', "%{$q}%")
+                        ->orWhere('id', $q)
+                        ->orWhere('meet_id', $q);
+                });
+            })
+            ->orderByDesc('created_at')
+            ->paginate($perPage)
+            ->withQueryString();
+
+        return view('imports.lenex.history', [
+            'batches' => $batches,
+            'types' => $types,
+            'q' => $q,
+            'type' => $type,
+            'perPage' => $perPage,
+        ]);
+    }
+
+    public function historyShow(ImportBatch $batch)
+    {
+        abort_unless($batch->status === 'committed', 404);
+
+        // Optional: Falls du Relationships hast und anzeigen willst:
+        // $batch->loadCount(['issues', 'mappings']);
+
+        return view('imports.lenex.history_show', [
+            'batch' => $batch,
+        ]);
     }
 }

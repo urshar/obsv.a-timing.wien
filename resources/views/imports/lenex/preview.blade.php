@@ -49,63 +49,14 @@
             subtitle="Type: {{ $batch->type }} · Status: {{ $batch->status }} · File: {{ $batch->filename }}"
         />
 
-        {{-- Summary / Commit --}}
+        {{-- Summary / Commit (refactored) --}}
         <x-ui.card>
             <x-ui.card-header>
                 <div class="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
-                    <div class="space-y-2">
-                        <div class="text-sm text-slate-600">
-                            <span class="font-semibold text-slate-900">Meet</span>
-                            <span class="ml-2">{{ $meet['name'] ?? '—' }}</span>
-                        </div>
-
-                        @php
-                            $from = data_get($meet, 'from');
-                            $to   = data_get($meet, 'to');
-                            $city = data_get($meet, 'city');
-
-                            $fmt = function ($v) {
-                                if (!$v) return null;
-                                try {
-                                    return Carbon::parse($v)->format('d.m.Y');
-                                } catch (Throwable $e) {
-                                    return (string) $v;
-                                }
-                            };
-
-                            $fromFmt = $fmt($from);
-                            $toFmt   = $fmt($to);
-
-                            $dateLabel = null;
-                            if ($fromFmt && $toFmt && $fromFmt !== $toFmt) {
-                                $dateLabel = "{$fromFmt} – {$toFmt}";
-                            } elseif ($fromFmt) {
-                                $dateLabel = $fromFmt;
-                            }
-                        @endphp
-
-                        <div class="text-sm text-slate-500 flex flex-wrap items-center gap-x-2 gap-y-1">
-                            @if($dateLabel)
-                                <span
-                                    class="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700">
-                                    {{ $dateLabel }}
-                                </span>
-                            @else
-                                <span
-                                    class="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 ring-1 ring-inset ring-amber-200">
-                                    No meet date in LENEX
-                                </span>
-                            @endif
-
-                            @if(!empty($city))
-                                <span class="text-slate-400">•</span>
-                                <span>{{ $city }}</span>
-                            @endif
-                        </div>
-
-                        <div class="flex flex-wrap gap-2 text-xs">
-                            <x-ui.badge level="neutral">Clubs: {{ $counts['clubs'] ?? 0 }}</x-ui.badge>
-                            <x-ui.badge level="neutral">Athletes: {{ $counts['athletes'] ?? 0 }}</x-ui.badge>
+                    <div class="space-y-1">
+                        <div class="text-lg font-semibold text-slate-900">Meet Summary</div>
+                        <div class="text-sm text-slate-500">
+                            Review key data before committing the import.
                         </div>
                     </div>
 
@@ -116,9 +67,113 @@
                                 Commit Import
                             </x-ui.button>
                         </form>
+
+                        <form method="POST" action="{{ route('imports.lenex.abort', $batch) }}">
+                            @csrf
+                            <x-ui.button type="submit" onclick="return confirm('Batch wirklich abbrechen?')">
+                                Abort
+                            </x-ui.button>
+                        </form>
                     </div>
                 </div>
             </x-ui.card-header>
+
+            <x-ui.card-body>
+                @php
+                    $from = data_get($meet, 'from');
+                    $to   = data_get($meet, 'to');
+                    $city = data_get($meet, 'city');
+
+                    $fmt = function ($v) {
+                        if (!$v) return null;
+                        try {
+                            return Carbon::parse($v)->format('d.m.Y');
+                        } catch (Throwable $e) {
+                            return (string) $v;
+                        }
+                    };
+
+                    $fromFmt = $fmt($from);
+                    $toFmt   = $fmt($to);
+
+                    $dateLabel = null;
+                    if ($fromFmt && $toFmt && $fromFmt !== $toFmt) {
+                        $dateLabel = "{$fromFmt} – {$toFmt}";
+                    } elseif ($fromFmt) {
+                        $dateLabel = $fromFmt;
+                    }
+                @endphp
+
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div class="md:col-span-2">
+                        <div class="text-xs font-semibold text-slate-500 uppercase tracking-wide">Meet</div>
+                        <div class="mt-1 text-sm font-medium text-slate-900 wrap-break-word">
+                            {{ $meet['name'] ?? '—' }}
+                        </div>
+                    </div>
+
+                    <div>
+                        <div class="text-xs font-semibold text-slate-500 uppercase tracking-wide">Batch</div>
+                        <div class="mt-1 text-sm font-medium text-slate-900">
+                            #{{ $batch->id }}
+                        </div>
+                    </div>
+
+                    <div>
+                        <div class="text-xs font-semibold text-slate-500 uppercase tracking-wide">Date</div>
+                        <div class="mt-1">
+                            @if($dateLabel)
+                                <x-ui.badge level="neutral">{{ $dateLabel }}</x-ui.badge>
+                            @else
+                                <x-ui.badge level="warning">No meet date in LENEX</x-ui.badge>
+                            @endif
+                        </div>
+                    </div>
+
+                    <div>
+                        <div class="text-xs font-semibold text-slate-500 uppercase tracking-wide">City</div>
+                        <div class="mt-1 text-sm font-medium text-slate-900">
+                            {{ $city ?: '—' }}
+                        </div>
+                    </div>
+
+                    <div>
+                        <div class="text-xs font-semibold text-slate-500 uppercase tracking-wide">Status</div>
+                        <div class="mt-1">
+                            @php
+                                $statusLevel = match($batch->status) {
+                                    'preview' => 'warning',
+                                    'committed' => 'success',
+                                    'failed' => 'danger',
+                                    default => 'neutral',
+                                };
+                            @endphp
+                            <x-ui.badge :level="$statusLevel">{{ $batch->status }}</x-ui.badge>
+                        </div>
+                    </div>
+
+                    <div>
+                        <div class="text-xs font-semibold text-slate-500 uppercase tracking-wide">Clubs</div>
+                        <div class="mt-1 text-sm font-medium text-slate-900">
+                            {{ $counts['clubs'] ?? 0 }}
+                        </div>
+                    </div>
+
+                    <div>
+                        <div class="text-xs font-semibold text-slate-500 uppercase tracking-wide">Athletes</div>
+                        <div class="mt-1 text-sm font-medium text-slate-900">
+                            {{ $counts['athletes'] ?? 0 }}
+                        </div>
+                    </div>
+
+                    <div>
+                        <div class="text-xs font-semibold text-slate-500 uppercase tracking-wide">Staffeln</div>
+                        <div class="mt-1 text-sm font-medium text-slate-900">
+                            {{ $batch->relay_count }}
+                        </div>
+                    </div>
+                </div>
+            </x-ui.card-body>
         </x-ui.card>
 
         {{-- MEET mapping --}}

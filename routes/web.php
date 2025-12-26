@@ -37,4 +37,8 @@ Route::prefix('imports/lenex')->name('imports.lenex.')->group(function () {
 
     Route::post('/batch/{batch}/map', [LenexImportController::class, 'map'])->name('map');
     Route::post('/batch/{batch}/commit', [LenexImportController::class, 'commit'])->name('commit');
+    Route::post('batch/{batch}/abort', [LenexImportController::class, 'abort'])->name('abort');
+
+    Route::get('/history', [LenexImportController::class, 'history'])->name('history');
+    Route::get('/history/{batch}', [LenexImportController::class, 'historyShow'])->name('history.show');
 });

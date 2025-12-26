@@ -12,6 +12,7 @@ use App\Models\Meet;
 use App\Support\Concerns\DeletesInChunks;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use RuntimeException;
 use SimpleXMLElement;
@@ -73,6 +74,7 @@ class LenexImportService
             'counts' => [
                 'clubs' => 0,
                 'athletes' => 0,
+                'relays' => 0,
             ],
         ];
 
@@ -84,6 +86,8 @@ class LenexImportService
 
         $athleteIssues = $this->buildAthleteIssues($batch, $xml);
         $summary['counts']['athletes'] = $athleteIssues['count'] ?? 0;
+
+        $summary['counts']['relays'] = $this->countRelaysInXml($xml);
 
         $batch->update(['summary_json' => $summary]);
     }
@@ -606,10 +610,22 @@ class LenexImportService
                 $this->importEntriesAndOrResults($batch, $xml, $meet);
             }
 
+            $summary = $batch->summary_json;
+            if (! is_array($summary)) {
+                $summary = [];
+            }
+            if (! isset($summary['counts']) || ! is_array($summary['counts'])) {
+                $summary['counts'] = [];
+            }
+
+            $summary['counts']['relays'] = $this->countRelaysInXml($xml);
+
             $batch->update([
                 'meet_id' => $meet->id,
                 'status' => 'committed',
+                'summary_json' => $summary,
             ]);
+
         });
     }
 
@@ -1214,5 +1230,30 @@ class LenexImportService
                 'updated_at' => now(),
             ]);
         }
+    }
+
+    public function abortBatch(ImportBatch $batch): void
+    {
+        // 1) Status
+        $batch->status = 'aborted';
+        $batch->save();
+
+        // 2) Child-Tabellen aufräumen
+        $batch->issues()->delete();
+        $batch->mappings()->delete();
+
+        // 3) XML löschen
+        $path = "imports/lenex/batch_{$batch->id}.xml";
+        Storage::disk('local')->delete($path);
+
+        // Optional: Summary/Metadaten zurücksetzen
+        // $batch->summary_json = null; $batch->save();
+    }
+
+    private function countRelaysInXml(SimpleXMLElement $xml): int
+    {
+        $nodes = $xml->xpath('//RELAY') ?: [];
+
+        return count($nodes);
     }
 }

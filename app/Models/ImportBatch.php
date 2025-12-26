@@ -24,4 +24,19 @@ class ImportBatch extends Model
     {
         return $this->hasMany(ImportMapping::class);
     }
+
+    public function getRelayCountAttribute(): int
+    {
+        $s = $this->summary_json;
+        if (! is_array($s)) {
+            return 0;
+        }
+
+        $counts = $s['counts'] ?? null;
+        if (is_array($counts) && isset($counts['relays']) && is_numeric($counts['relays'])) {
+            return (int) $counts['relays'];
+        }
+
+        return 0;
+    }
 }
