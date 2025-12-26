@@ -235,6 +235,10 @@
             </x-ui.card-body>
         </x-ui.card>
 
+        @if ($batch->type === 'meet_structure')
+            @include('imports.lenex.partials.meet_structure', ['batch' => $batch])
+        @endif
+
         {{-- CLUBS --}}
         <x-ui.card>
             <x-ui.card-header>

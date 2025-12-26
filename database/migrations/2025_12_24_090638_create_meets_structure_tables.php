@@ -55,10 +55,11 @@ return new class extends Migration
             $table->char('gender', 1)->nullable();
 
             $table->string('name')->nullable();
+            $table->unsignedSmallInteger('handicap')->nullable()->after('max_age');
 
             $table->timestamps();
 
-            $table->index(['meet_id', 'code']);
+            $table->unique(['meet_id', 'code'], 'meet_age_groups_meet_id_code_unique');
         });
 
         Schema::create('meet_sessions', function (Blueprint $table) {
@@ -75,7 +76,7 @@ return new class extends Migration
 
             $table->timestamps();
 
-            $table->index(['meet_id', 'session_no']);
+            $table->unique(['meet_id', 'session_no'], 'meet_sessions_meet_id_session_no_unique');
             $table->index(['meet_id', 'date']);
         });
 
@@ -98,7 +99,7 @@ return new class extends Migration
 
             $table->timestamps();
 
-            $table->index(['meet_session_id', 'event_no']);
+            $table->unique(['meet_session_id', 'event_no'], 'meet_events_session_id_event_no_unique');
             $table->index(['distance', 'stroke', 'gender']);
         });
     }

@@ -10,6 +10,7 @@ use App\Models\ImportIssue;
 use App\Models\ImportMapping;
 use App\Models\Meet;
 use App\Support\Concerns\DeletesInChunks;
+use App\Support\Concerns\LenexXmlValueHelpers;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
@@ -21,6 +22,7 @@ use Throwable;
 class LenexImportService
 {
     use DeletesInChunks;
+    use LenexXmlValueHelpers;
 
     /**
      * @throws Throwable
@@ -49,16 +51,34 @@ class LenexImportService
 
     private function detectType(SimpleXMLElement $xml): string
     {
-        if (! empty($xml->xpath('//RECORDS'))) {
+        // Records
+        $hasRecords =
+            ! empty($xml->xpath('//RECORD')) ||
+            ! empty($xml->xpath('//RECORDS'));
+
+        if ($hasRecords) {
             return 'records';
         }
-        if (! empty($xml->xpath('//RESULT'))) {
+
+        // Results
+        $hasResults =
+            ! empty($xml->xpath('//RESULT')) ||
+            ! empty($xml->xpath('//RESULTS'));
+
+        if ($hasResults) {
             return 'results';
         }
-        if (! empty($xml->xpath('//ENTRY'))) {
+
+        // Entries
+        $hasEntries =
+            ! empty($xml->xpath('//ENTRY')) ||
+            ! empty($xml->xpath('//ENTRIES'));
+
+        if ($hasEntries) {
             return 'entries';
         }
 
+        // Fallback: nur Struktur (oder Meet-Infos ohne Entries/Results)
         return 'meet_structure';
     }
 
@@ -89,14 +109,12 @@ class LenexImportService
 
         $summary['counts']['relays'] = $this->countRelaysInXml($xml);
 
+        if ($batch->type === 'meet_structure') {
+            $summary['structure'] = $this->extractStructureForPreview($xml);
+        }
+
         $batch->update(['summary_json' => $summary]);
     }
-
-    /*
-    |--------------------------------------------------------------------------
-    | Preview
-    |--------------------------------------------------------------------------
-    */
 
     public function extractMeetSummary(SimpleXMLElement $xml): array
     {
@@ -139,16 +157,11 @@ class LenexImportService
         ];
     }
 
-    private function strAttrNullable(SimpleXMLElement $node, string $attr): ?string
-    {
-        $v = LenexXml::attr($node, $attr);
-        if ($v === null) {
-            return null;
-        }
-        $v = trim($v);
-
-        return $v === '' ? null : $v;
-    }
+    /*
+    |--------------------------------------------------------------------------
+    | Preview
+    |--------------------------------------------------------------------------
+    */
 
     private function createMeetIssueAndDefaultMapping(ImportBatch $batch, array $meetInfo): void
     {
@@ -421,12 +434,6 @@ class LenexImportService
         );
     }
 
-    /*
-    |--------------------------------------------------------------------------
-    | Meet + Facility mapping
-    |--------------------------------------------------------------------------
-    */
-
     /**
      * Resolve nation_id from LENEX nation (IOC code only, e.g. AUT, GER, ...).
      */
@@ -444,6 +451,12 @@ class LenexImportService
 
         return $row?->id ? (int) $row->id : null;
     }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Meet + Facility mapping
+    |--------------------------------------------------------------------------
+    */
 
     private function buildAthleteIssues(ImportBatch $batch, SimpleXMLElement $xml): array
     {
@@ -479,12 +492,6 @@ class LenexImportService
         return ['count' => $count];
     }
 
-    /*
-    |--------------------------------------------------------------------------
-    | Structure import
-    |--------------------------------------------------------------------------
-    */
-
     private function extractAthletesFromXml(SimpleXMLElement $xml): array
     {
         $nodes = $xml->xpath('//ATHLETE') ?: [];
@@ -499,7 +506,7 @@ class LenexImportService
 
     /*
     |--------------------------------------------------------------------------
-    | Entries / Results import with event fallback
+    | Structure import
     |--------------------------------------------------------------------------
     */
 
@@ -538,6 +545,12 @@ class LenexImportService
             'gender' => $gender,
         ];
     }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Entries / Results import with event fallback
+    |--------------------------------------------------------------------------
+    */
 
     private function athleteSourceKey(?string $ln, ?string $fn, ?int $by): string
     {
@@ -578,6 +591,18 @@ class LenexImportService
         );
     }
 
+    private function countRelaysInXml(SimpleXMLElement $xml): int
+    {
+        $nodes = $xml->xpath('//RELAY') ?: [];
+
+        return count($nodes);
+    }
+
+    private function extractStructureForPreview(SimpleXMLElement $xml): array
+    {
+        return app(LenexStructureExtractor::class)->extract($xml);
+    }
+
     /**
      * @throws Throwable
      */
@@ -585,6 +610,10 @@ class LenexImportService
     {
         if ($batch->status !== 'preview') {
             throw new RuntimeException('Batch is not in preview state.');
+        }
+
+        if ($batch->issues()->where('severity', 'error')->exists()) {
+            throw new RuntimeException('Batch has blocking errors and cannot be committed.');
         }
 
         $xml = LenexXml::load($xmlString);
@@ -604,7 +633,9 @@ class LenexImportService
 
             $this->applyFacilityToMeetIfMapped($batch, $meet);
 
-            $this->importStructure($xml, $meet);
+            if ($batch->type === 'meet_structure' || $this->xmlHasStructure($xml)) {
+                $this->importStructure($xml, $meet);
+            }
 
             if (in_array($batch->type, ['entries', 'results'], true)) {
                 $this->importEntriesAndOrResults($batch, $xml, $meet);
@@ -628,6 +659,12 @@ class LenexImportService
 
         });
     }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Entity resolution (mappings)
+    |--------------------------------------------------------------------------
+    */
 
     private function resolveOrCreateMeet(ImportBatch $batch, SimpleXMLElement $xml): Meet
     {
@@ -663,12 +700,6 @@ class LenexImportService
             'end_date' => $to,
         ]);
     }
-
-    /*
-    |--------------------------------------------------------------------------
-    | Entity resolution (mappings)
-    |--------------------------------------------------------------------------
-    */
 
     private function resetMeetData(Meet $meet): void
     {
@@ -730,28 +761,76 @@ class LenexImportService
         }
     }
 
+    /*
+    |--------------------------------------------------------------------------
+    | Writes
+    |--------------------------------------------------------------------------
+    */
+
+    private function xmlHasStructure(SimpleXMLElement $xml): bool
+    {
+        return
+            ! empty($xml->xpath('//SESSION')) ||
+            ! empty($xml->xpath('//EVENT')) ||
+            ! empty($xml->xpath('//AGEGROUP'));
+    }
+
     private function importStructure(SimpleXMLElement $xml, Meet $meet): void
     {
-        // AGE GROUPS
-        $ageGroups = $xml->xpath('//AGEGROUP') ?: [];
-        foreach ($ageGroups as $ag) {
-            $code = $this->strAttrNullable($ag, 'agegroupid') ?? $this->strAttrNullable($ag, 'code');
+        $structure = app(LenexStructureExtractor::class)->extract($xml);
+
+        $now = now();
+
+        /**
+         * AGE GROUPS (robust upsert + optional sync)
+         */
+        $ageRows = [];
+        $ageCodesInXml = [];
+
+        foreach (($structure['age_groups'] ?? []) as $ag) {
+            $code = $this->normString($ag['code'] ?? null, 50);
             if (! $code) {
                 continue;
             }
 
-            $min = $this->intAttrNullable($ag, 'agemin') ?? $this->intAttrNullable($ag, 'min');
-            $max = $this->intAttrNullable($ag, 'agemax') ?? $this->intAttrNullable($ag, 'max');
+            $ageCodesInXml[] = $code;
 
-            DB::table('meet_age_groups')->updateOrInsert(
-                ['meet_id' => $meet->id, 'code' => $code],
-                [
-                    'min_age' => $min,
-                    'max_age' => $max,
-                    'updated_at' => now(),
-                    'created_at' => now(),
-                ]
-            );
+            $min = $this->normUInt(isset($ag['min']) ? (int) $ag['min'] : null, 0, 255);
+            $max = $this->normUInt(isset($ag['max']) ? (int) $ag['max'] : null, 0, 255);
+            $handicap = $this->normUInt(isset($ag['handicap']) ? (int) $ag['handicap'] : null);
+
+            $ageRows[] = [
+                'meet_id' => $meet->id,
+                'code' => $code,
+                'min_age' => $min,
+                'max_age' => $max,
+                'handicap' => $handicap,
+                'gender' => $this->normGender($ag['gender'] ?? null),
+                'name' => $this->normString($ag['name'] ?? null),
+                'updated_at' => $now,
+                'created_at' => $now,
+            ];
+        }
+
+        // Upsert without touching created_at on update
+        $this->upsertWithoutTouchingCreatedAt(
+            'meet_age_groups',
+            $ageRows,
+            ['meet_id', 'code'],
+            ['min_age', 'max_age', 'handicap', 'gender', 'name', 'updated_at']
+        );
+
+        // Optional sync: remove age groups not present in XML (only if you want strict structure sync)
+        // If you only want this behavior for "meet_structure" imports, gate it with your own condition.
+        // Example:
+        // if (($batch->type ?? null) === 'meet_structure') { ... }
+        if (! empty($structure['sync'] ?? false)) {
+            $ageCodesInXml = array_values(array_unique($ageCodesInXml));
+
+            DB::table('meet_age_groups')
+                ->where('meet_id', $meet->id)
+                ->when($ageCodesInXml !== [], fn ($q) => $q->whereNotIn('code', $ageCodesInXml))
+                ->delete();
         }
 
         $ageGroupIdByCode = DB::table('meet_age_groups')
@@ -759,108 +838,106 @@ class LenexImportService
             ->pluck('id', 'code')
             ->all();
 
-        // SESSIONS + EVENTS
-        $sessions = $xml->xpath('//SESSION') ?: [];
-        foreach ($sessions as $s) {
-            $date = $this->strAttrNullable($s, 'date') ?? $this->strAttrNullable($s, 'day');
-            $time = $this->strAttrNullable($s, 'starttime') ?? $this->strAttrNullable($s, 'time');
-            $number = $this->intAttrNullable($s, 'number') ?? $this->intAttrNullable($s, 'sessionid');
+        /**
+         * SESSIONS (robust upsert + optional sync)
+         */
+        $sessionRows = [];
+        $sessionNosInXml = [];
 
-            $sessionId = DB::table('meet_sessions')->insertGetId([
+        foreach (($structure['sessions'] ?? []) as $s) {
+            $no = isset($s['no']) ? (int) $s['no'] : null;
+            if ($no === null) {
+                continue;
+            }
+
+            $sessionNosInXml[] = $no;
+
+            $sessionRows[] = [
                 'meet_id' => $meet->id,
-                'session_no' => $number,
-                'date' => $date,
-                'start_time' => $time,
-                'created_at' => now(),
-                'updated_at' => now(),
-            ]);
+                'session_no' => $no,
+                'date' => $s['date'] ?? null,
+                'start_time' => $s['start_time'] ?? null,
+                'updated_at' => $now,
+                'created_at' => $now,
+            ];
+        }
 
-            $events = $s->xpath('.//EVENT') ?: [];
-            foreach ($events as $e) {
-                $eventNo = $this->intAttrNullable($e, 'number') ?? $this->intAttrNullable($e, 'eventid');
-                $eName = $this->strAttrNullable($e, 'name') ?? LenexXml::text($e->NAME ?? null);
+        $this->upsertWithoutTouchingCreatedAt(
+            'meet_sessions',
+            $sessionRows,
+            ['meet_id', 'session_no'],
+            ['date', 'start_time', 'updated_at']
+        );
 
-                $gender = $this->genderChar($this->strAttrNullable($e, 'gender'));
-                $distance = $this->intAttrNullable($e, 'distance');
-                $stroke = $this->strAttrNullable($e, 'stroke');
-                $round = $this->strAttrNullable($e, 'round');
+        // Optional sync sessions
+        if (! empty($structure['sync'] ?? false)) {
+            $sessionNosInXml = array_values(array_unique($sessionNosInXml));
 
-                $isRelay = $this->boolAttr($e, ['relay', 'isrelay'])
-                    ?? (! empty($e->xpath('.//RELAY')));
+            // If meet_events has FK cascade on meet_session_id, this is safe.
+            // Otherwise, delete events of removed sessions first.
+            DB::table('meet_sessions')
+                ->where('meet_id', $meet->id)
+                ->when($sessionNosInXml !== [], fn ($q) => $q->whereNotIn('session_no', $sessionNosInXml))
+                ->delete();
+        }
 
-                $ageGroupCode = $this->strAttrNullable($e, 'agegroupid') ?? $this->strAttrNullable($e, 'agegroup');
+        $sessionIdByNo = DB::table('meet_sessions')
+            ->where('meet_id', $meet->id)
+            ->pluck('id', 'session_no')
+            ->all();
+
+        /**
+         * EVENTS (robust upsert)
+         */
+        $eventRows = [];
+
+        foreach (($structure['sessions'] ?? []) as $s) {
+            $no = isset($s['no']) ? (int) $s['no'] : null;
+            if ($no === null) {
+                continue;
+            }
+
+            $sessionId = $sessionIdByNo[$no] ?? null;
+            if (! $sessionId) {
+                continue;
+            }
+
+            foreach (($s['events'] ?? []) as $e) {
+                $eventNo = isset($e['no']) ? (int) $e['no'] : null;
+                if ($eventNo === null) {
+                    continue;
+                }
+
+                $ageGroupCode = $this->normString($e['age_group'] ?? null, 50);
                 $ageGroupId = $ageGroupCode ? ($ageGroupIdByCode[$ageGroupCode] ?? null) : null;
 
-                DB::table('meet_events')->insert([
+                $eventRows[] = [
                     'meet_session_id' => $sessionId,
-                    'meet_age_group_id' => $ageGroupId,
                     'event_no' => $eventNo,
-                    'name' => $eName,
-                    'gender' => $gender,
-                    'distance' => $distance,
-                    'stroke' => $stroke,
-                    'round' => $round,
-                    'is_relay' => $isRelay,
-                    'created_at' => now(),
-                    'updated_at' => now(),
-                ]);
+                    'meet_age_group_id' => $ageGroupId,
+                    'name' => $this->normString($e['name'] ?? null),
+                    'gender' => $this->normGender($e['gender'] ?? null),
+                    'distance' => isset($e['distance']) ? (int) $e['distance'] : null,
+                    'stroke' => $this->normString($e['stroke'] ?? null, 50),
+                    'round' => $this->normString($e['round'] ?? null, 50),
+                    'is_relay' => (int) ($e['is_relay'] ?? false),
+                    'updated_at' => $now,
+                    'created_at' => $now,
+                ];
             }
         }
+
+        $this->upsertWithoutTouchingCreatedAt(
+            'meet_events',
+            $eventRows,
+            ['meet_session_id', 'event_no'],
+            ['meet_age_group_id', 'name', 'gender', 'distance', 'stroke', 'round', 'is_relay', 'updated_at']
+        );
+
+        // NOTE: I intentionally do NOT auto-delete events here by default, because
+        // events are often referenced by entries/results. If you *do* want strict sync,
+        // do it only when you're sure dependent data is cleared (e.g. resetMeetData()).
     }
-
-    /*
-    |--------------------------------------------------------------------------
-    | Writes
-    |--------------------------------------------------------------------------
-    */
-
-    private function intAttrNullable(SimpleXMLElement $node, string $attr): ?int
-    {
-        $v = LenexXml::attr($node, $attr);
-        if ($v === null) {
-            return null;
-        }
-        $v = trim($v);
-        if ($v === '' || ! is_numeric($v)) {
-            return null;
-        }
-
-        return (int) $v;
-    }
-
-    private function genderChar(?string $genderRaw): ?string
-    {
-        if (! $genderRaw) {
-            return null;
-        }
-        $g = strtoupper(trim($genderRaw));
-
-        return $g === '' ? null : substr($g, 0, 1);
-    }
-
-    private function boolAttr(SimpleXMLElement $node, array $attrs): ?bool
-    {
-        foreach ($attrs as $attr) {
-            $raw = LenexXml::attr($node, $attr);
-            if ($raw === null) {
-                continue;
-            }
-            $raw = strtolower(trim($raw));
-            if ($raw === '') {
-                continue;
-            }
-
-            return in_array($raw, ['1', 'true', 'yes', 'y'], true);
-        }
-
-        return null;
-    }
-
-    /*
-    |--------------------------------------------------------------------------
-    | Reset (Variante A)
-    |--------------------------------------------------------------------------
-    */
 
     private function importEntriesAndOrResults(ImportBatch $batch, SimpleXMLElement $xml, Meet $meet): void
     {
@@ -923,7 +1000,7 @@ class LenexImportService
 
     /*
     |--------------------------------------------------------------------------
-    | Small helpers (DRY)
+    | Reset (Variante A)
     |--------------------------------------------------------------------------
     */
 
@@ -956,6 +1033,12 @@ class LenexImportService
             'byComposite' => $byComposite,
         ];
     }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Small helpers (DRY)
+    |--------------------------------------------------------------------------
+    */
 
     private function eventCompositeKey(
         ?int $distance,
@@ -1250,10 +1333,83 @@ class LenexImportService
         // $batch->summary_json = null; $batch->save();
     }
 
-    private function countRelaysInXml(SimpleXMLElement $xml): int
+    private function normUInt(?int $value, int $min = 0, int $max = 65535): ?int
     {
-        $nodes = $xml->xpath('//RELAY') ?: [];
+        if ($value === null) {
+            return null;
+        }
+        if ($value < $min || $value > $max) {
+            return null;
+        }
 
-        return count($nodes);
+        return $value;
+    }
+
+    private function normString(?string $value, int $maxLen = 255): ?string
+    {
+        if ($value === null) {
+            return null;
+        }
+        $v = trim($value);
+        if ($v === '') {
+            return null;
+        }
+
+        return mb_substr($v, 0, $maxLen);
+    }
+
+    private function normGender(?string $value): ?string
+    {
+        if ($value === null) {
+            return null;
+        }
+        $v = strtoupper(trim($value));
+        if ($v === '') {
+            return null;
+        }
+
+        // häufige Varianten abfangen
+        if (in_array($v, ['M', 'MALE', 'MAN'], true)) {
+            return 'M';
+        }
+        if (in_array($v, ['F', 'FEMALE', 'WOMAN'], true)) {
+            return 'F';
+        }
+
+        // LENEX/Meet-Setups haben manchmal X/MIXED/ALL
+        if (in_array($v, ['X', 'MIX', 'MIXED', 'A', 'ALL'], true)) {
+            return 'X';
+        }
+
+        // wenn dein System nur M/F erlaubt, hier stattdessen null zurückgeben
+        if (strlen($v) === 1) {
+            return $v;
+        }
+
+        return null;
+    }
+
+    /**
+     * Upsert ohne created_at-Überschreibung: nutzt Query Builder upsert().
+     *
+     * @param  array<int, array<string, mixed>>  $rows
+     * @param  array<int, string>  $uniqueBy
+     * @param  array<int, string>  $updateColumns
+     */
+    private function upsertWithoutTouchingCreatedAt(
+        string $table,
+        array $rows,
+        array $uniqueBy,
+        array $updateColumns
+    ): void {
+        if ($rows === []) {
+            return;
+        }
+
+        DB::table($table)->upsert(
+            $rows,
+            $uniqueBy,
+            $updateColumns
+        );
     }
 }
