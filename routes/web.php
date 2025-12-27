@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\ContinentController;
 use App\Http\Controllers\LenexImportController;
+use App\Http\Controllers\LenexMeetStructureController;
 use App\Http\Controllers\NationController;
 use App\Http\Controllers\NationImportController;
 use App\Http\Controllers\ParaSwimStyleAdminController;
@@ -38,6 +39,13 @@ Route::prefix('imports/lenex')->name('imports.lenex.')->group(function () {
     Route::post('/batch/{batch}/map', [LenexImportController::class, 'map'])->name('map');
     Route::post('/batch/{batch}/commit', [LenexImportController::class, 'commit'])->name('commit');
     Route::post('batch/{batch}/abort', [LenexImportController::class, 'abort'])->name('abort');
+
+    Route::get('/batch/{batch}/meet-structure', [LenexMeetStructureController::class, 'show'])
+        ->name('meet_structure.show');
+    Route::get('/batch/{batch}/meet-structure/edit', [LenexMeetStructureController::class, 'edit'])
+        ->name('meet_structure.edit');
+    Route::put('/batch/{batch}/meet-structure', [LenexMeetStructureController::class, 'update'])
+        ->name('meet_structure.update');
 
     Route::get('/history', [LenexImportController::class, 'history'])->name('history');
     Route::get('/history/{batch}', [LenexImportController::class, 'historyShow'])->name('history.show');

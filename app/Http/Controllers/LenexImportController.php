@@ -117,9 +117,22 @@ class LenexImportController extends Controller
         $service->commit($batch, $xmlString);
 
         // ✅ FINAL redirect: committed batches go to history detail view
+        $batch->refresh();
+
+        $summary = $batch->summary_json ?? [];
+        $structureOnly = (bool) ($summary['structure_only'] ?? false);
+
+        if ($batch->type === 'meet_structure' && $structureOnly) {
+            return redirect()
+                ->route('imports.lenex.meet_structure.show', $batch)
+                ->with('status', 'LENEX meet structure imported. You can now edit the structure.');
+        }
+
+        // Fallback (für spätere Types: entries/results/records)
         return redirect()
             ->route('imports.lenex.history.show', $batch)
             ->with('status', 'LENEX import successfully committed.');
+
     }
 
     /**

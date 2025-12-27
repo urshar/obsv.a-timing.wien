@@ -98,6 +98,10 @@ class LenexImportService
             ],
         ];
 
+        $summary['type'] = $batch->type;
+
+        $summary['structure_only'] = $batch->type === 'meet_structure' && $this->isStructureOnly($xml);
+
         $this->createMeetIssueAndDefaultMapping($batch, $meetInfo);
         $this->createFacilityIssueAndDefaultMapping($batch, $meetInfo);
 
@@ -645,11 +649,26 @@ class LenexImportService
             if (! is_array($summary)) {
                 $summary = [];
             }
+
+            /** counts sicherstellen */
             if (! isset($summary['counts']) || ! is_array($summary['counts'])) {
                 $summary['counts'] = [];
             }
-
             $summary['counts']['relays'] = $this->countRelaysInXml($xml);
+
+            /** meet sicherstellen + meet.id setzen */
+            if (! isset($summary['meet']) || ! is_array($summary['meet'])) {
+                $summary['meet'] = [];
+            }
+            $summary['meet']['id'] = $meet->id;
+
+            /**
+             * Optional aber empfehlenswert: nach Commit die DB-Werte zurückschreiben,
+             * damit summary konsistent ist (falls z.B. link/update gemacht wurde)
+             */
+            $summary['meet']['name'] = $meet->name;
+            $summary['meet']['from'] = $meet->start_date;
+            $summary['meet']['to'] = $meet->end_date;
 
             $batch->update([
                 'meet_id' => $meet->id,
@@ -1367,5 +1386,18 @@ class LenexImportService
             $uniqueBy,
             $updateColumns
         );
+    }
+
+    private function isStructureOnly(SimpleXMLElement $xml): bool
+    {
+        $hasResults =
+            ! empty($xml->xpath('//RESULT')) ||
+            ! empty($xml->xpath('//RESULTS'));
+
+        $hasEntries =
+            ! empty($xml->xpath('//ENTRY')) ||
+            ! empty($xml->xpath('//ENTRIES'));
+
+        return ! $hasResults && ! $hasEntries;
     }
 }
