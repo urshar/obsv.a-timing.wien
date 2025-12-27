@@ -30,6 +30,16 @@
         if ($map->action === 'link') return 'link → #' . ($map->target_id ?? '—');
         return $map->action ?? 'create';
     };
+
+    $statusBadgeLevel = function (?string $status): string {
+        return match($status) {
+            'preview'   => 'warning',
+            'committed' => 'success',
+            'failed'    => 'danger',
+            default     => 'neutral',
+        };
+    };
+
 @endphp
 
 @section('content')
@@ -49,6 +59,11 @@
             subtitle="Type: {{ $batch->type }} · Status: {{ $batch->status }} · File: {{ $batch->filename }}"
         />
 
+        <div class="flex items-center gap-2">
+            <div class="text-sm text-slate-600">Status:</div>
+            <x-ui.badge :level="$statusBadgeLevel($batch->status)">{{ $batch->status }}</x-ui.badge>
+        </div>
+
         {{-- Summary / Commit (refactored) --}}
         <x-ui.card>
             <x-ui.card-header>
@@ -61,6 +76,10 @@
                     </div>
 
                     <div class="flex items-center gap-2">
+                        <x-ui.badge :level="$statusBadgeLevel($batch->status)">
+                            Status: {{ $batch->status }}
+                        </x-ui.badge>
+                        
                         <form method="POST" action="{{ route('imports.lenex.commit', $batch) }}">
                             @csrf
                             <x-ui.button type="submit" :disabled="$batch->status !== 'preview'">
@@ -68,12 +87,14 @@
                             </x-ui.button>
                         </form>
 
-                        <form method="POST" action="{{ route('imports.lenex.abort', $batch) }}">
-                            @csrf
-                            <x-ui.button type="submit" onclick="return confirm('Batch wirklich abbrechen?')">
-                                Abort
-                            </x-ui.button>
-                        </form>
+                        @if($batch->status === 'preview')
+                            <form method="POST" action="{{ route('imports.lenex.abort', $batch) }}">
+                                @csrf
+                                <x-ui.button type="submit" onclick="return confirm('Batch wirklich abbrechen?')">
+                                    Abort
+                                </x-ui.button>
+                            </form>
+                        @endif
                     </div>
                 </div>
             </x-ui.card-header>

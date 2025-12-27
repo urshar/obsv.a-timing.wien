@@ -77,15 +77,6 @@
                             @endforeach
                         </select>
                     </div>
-
-                    <div class="md:col-span-12 flex items-center gap-2 pt-1">
-                        <x-ui.button
-                            href="{{ route('imports.lenex.history.show', $batch) }}"
-                            size="sm"
-                        >
-                            Details
-                        </x-ui.button>
-                    </div>
                 </form>
             </x-ui.card-body>
         </x-ui.card>
@@ -150,9 +141,12 @@
                                 </td>
 
                                 <td class="px-4 py-3 text-right">
-                                    <a href="{{ route('imports.lenex.history.show', $batch) }}">
-                                        <x-ui.button type="button">Details</x-ui.button>
-                                    </a>
+                                    <x-ui.button
+                                        href="{{ route('imports.lenex.history.show', $batch) }}"
+                                        variant="secondary"
+                                    >
+                                        Details
+                                    </x-ui.button>
                                 </td>
                             </tr>
                         @empty

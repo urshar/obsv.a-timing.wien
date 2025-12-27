@@ -55,7 +55,7 @@ return new class extends Migration
             $table->char('gender', 1)->nullable();
 
             $table->string('name')->nullable();
-            $table->unsignedSmallInteger('handicap')->nullable()->after('max_age');
+            $table->string('handicap')->nullable();
 
             $table->timestamps();
 

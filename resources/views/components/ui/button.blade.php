@@ -1,6 +1,8 @@
 @props([
     'variant' => 'primary', // primary|secondary|danger|ghost
     'type' => 'button',
+    'href' => null,         // string|null
+    'as' => null,           // 'a'|'button'|null
 ])
 
 @php
@@ -12,8 +14,34 @@
         'ghost' => 'bg-transparent text-slate-700 hover:bg-slate-100',
     ];
     $cls = $variants[$variant] ?? $variants['primary'];
+
+    // treat disabled as a boolean; Blade will pass it via attributes
+    $disabled = filter_var($attributes->get('disabled'), FILTER_VALIDATE_BOOLEAN);
+
+    $isLink = ($as === 'a') || ($href !== null);
+
+    $disabledClasses = $disabled ? ' opacity-50 cursor-not-allowed pointer-events-none' : '';
+    $finalClass = trim("$base $cls $disabledClasses");
 @endphp
 
-<button type="{{ $type }}" {{ $attributes->merge(['class' => "$base $cls"]) }}>
-    {{ $slot }}
-</button>
+@if($isLink)
+    <a
+        href="{{ $disabled ? null : $href }}"
+        {{ $attributes
+            ->except(['type', 'disabled', 'href'])
+            ->merge(['class' => $finalClass]) }}
+        @if($disabled) aria-disabled="true" role="link" @endif
+    >
+        {{ $slot }}
+    </a>
+@else
+    <button
+        type="{{ $type }}"
+        {{ $attributes
+            ->except(['href'])
+            ->merge(['class' => $finalClass]) }}
+        @if($disabled) disabled @endif
+    >
+        {{ $slot }}
+    </button>
+@endif

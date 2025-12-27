@@ -778,41 +778,34 @@ class LenexImportService
     private function importStructure(SimpleXMLElement $xml, Meet $meet): void
     {
         $structure = app(LenexStructureExtractor::class)->extract($xml);
-
         $now = now();
 
-        /**
-         * AGE GROUPS (robust upsert + optional sync)
-         */
+        // AGE GROUPS
         $ageRows = [];
-        $ageCodesInXml = [];
 
         foreach (($structure['age_groups'] ?? []) as $ag) {
-            $code = $this->normString($ag['code'] ?? null, 50);
+            $code = $this->normString((string) ($ag['code'] ?? null), 50);
             if (! $code) {
                 continue;
             }
 
-            $ageCodesInXml[] = $code;
-
-            $min = $this->normUInt(isset($ag['min']) ? (int) $ag['min'] : null, 0, 255);
-            $max = $this->normUInt(isset($ag['max']) ? (int) $ag['max'] : null, 0, 255);
-            $handicap = $this->normUInt(isset($ag['handicap']) ? (int) $ag['handicap'] : null);
-
             $ageRows[] = [
                 'meet_id' => $meet->id,
                 'code' => $code,
-                'min_age' => $min,
-                'max_age' => $max,
-                'handicap' => $handicap,
+                'min_age' => isset($ag['min']) ? (int) $ag['min'] : null,
+                'max_age' => isset($ag['max']) ? (int) $ag['max'] : null,
+
+                // handicap kann "14" oder "1,2,3" sein → string speichern
+                'handicap' => $this->normString((string) ($ag['handicap'] ?? null)),
+
                 'gender' => $this->normGender($ag['gender'] ?? null),
                 'name' => $this->normString($ag['name'] ?? null),
+
                 'updated_at' => $now,
                 'created_at' => $now,
             ];
         }
 
-        // Upsert without touching created_at on update
         $this->upsertWithoutTouchingCreatedAt(
             'meet_age_groups',
             $ageRows,
@@ -820,37 +813,18 @@ class LenexImportService
             ['min_age', 'max_age', 'handicap', 'gender', 'name', 'updated_at']
         );
 
-        // Optional sync: remove age groups not present in XML (only if you want strict structure sync)
-        // If you only want this behavior for "meet_structure" imports, gate it with your own condition.
-        // Example:
-        // if (($batch->type ?? null) === 'meet_structure') { ... }
-        if (! empty($structure['sync'] ?? false)) {
-            $ageCodesInXml = array_values(array_unique($ageCodesInXml));
-
-            DB::table('meet_age_groups')
-                ->where('meet_id', $meet->id)
-                ->when($ageCodesInXml !== [], fn ($q) => $q->whereNotIn('code', $ageCodesInXml))
-                ->delete();
-        }
-
         $ageGroupIdByCode = DB::table('meet_age_groups')
             ->where('meet_id', $meet->id)
             ->pluck('id', 'code')
             ->all();
 
-        /**
-         * SESSIONS (robust upsert + optional sync)
-         */
+        // SESSIONS
         $sessionRows = [];
-        $sessionNosInXml = [];
-
         foreach (($structure['sessions'] ?? []) as $s) {
             $no = isset($s['no']) ? (int) $s['no'] : null;
             if ($no === null) {
                 continue;
             }
-
-            $sessionNosInXml[] = $no;
 
             $sessionRows[] = [
                 'meet_id' => $meet->id,
@@ -869,26 +843,12 @@ class LenexImportService
             ['date', 'start_time', 'updated_at']
         );
 
-        // Optional sync sessions
-        if (! empty($structure['sync'] ?? false)) {
-            $sessionNosInXml = array_values(array_unique($sessionNosInXml));
-
-            // If meet_events has FK cascade on meet_session_id, this is safe.
-            // Otherwise, delete events of removed sessions first.
-            DB::table('meet_sessions')
-                ->where('meet_id', $meet->id)
-                ->when($sessionNosInXml !== [], fn ($q) => $q->whereNotIn('session_no', $sessionNosInXml))
-                ->delete();
-        }
-
         $sessionIdByNo = DB::table('meet_sessions')
             ->where('meet_id', $meet->id)
             ->pluck('id', 'session_no')
             ->all();
 
-        /**
-         * EVENTS (robust upsert)
-         */
+        // EVENTS
         $eventRows = [];
 
         foreach (($structure['sessions'] ?? []) as $s) {
@@ -933,10 +893,6 @@ class LenexImportService
             ['meet_session_id', 'event_no'],
             ['meet_age_group_id', 'name', 'gender', 'distance', 'stroke', 'round', 'is_relay', 'updated_at']
         );
-
-        // NOTE: I intentionally do NOT auto-delete events here by default, because
-        // events are often referenced by entries/results. If you *do* want strict sync,
-        // do it only when you're sure dependent data is cleared (e.g. resetMeetData()).
     }
 
     private function importEntriesAndOrResults(ImportBatch $batch, SimpleXMLElement $xml, Meet $meet): void

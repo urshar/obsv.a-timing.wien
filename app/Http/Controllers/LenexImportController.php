@@ -104,15 +104,22 @@ class LenexImportController extends Controller
     public function commit(ImportBatch $batch, LenexImportService $service)
     {
         $path = "imports/lenex/batch_{$batch->id}.xml";
+
         if (! Storage::disk('local')->exists($path)) {
-            return back()->withErrors(['file' => 'Stored XML not found for this batch.']);
+            return redirect()
+                ->route('imports.lenex.preview', $batch)
+                ->withErrors(['file' => 'Stored XML not found for this batch.']);
         }
 
         $xmlString = Storage::disk('local')->get($path);
 
+        // performs validation, import and sets status = committed
         $service->commit($batch, $xmlString);
 
-        return redirect()->route('imports.lenex.preview', $batch)->with('status', 'Import committed.');
+        // ✅ FINAL redirect: committed batches go to history detail view
+        return redirect()
+            ->route('imports.lenex.history.show', $batch)
+            ->with('status', 'LENEX import successfully committed.');
     }
 
     /**
@@ -120,7 +127,14 @@ class LenexImportController extends Controller
      */
     public function abort(ImportBatch $batch, LenexImportService $service)
     {
-        abort_unless($batch->status === 'preview', 409, 'Only preview batches can be aborted.');
+        // UX: do not render an exception page; redirect back with a user-facing message.
+        if ($batch->status !== 'preview') {
+            return redirect()
+                ->route('imports.lenex.preview', $batch)
+                ->withErrors([
+                    'batch' => "Batch kann nicht abgebrochen werden. Aktueller Status: {$batch->status}",
+                ]);
+        }
 
         DB::transaction(function () use ($batch, $service) {
             $service->abortBatch($batch); // kapselt status + cleanup

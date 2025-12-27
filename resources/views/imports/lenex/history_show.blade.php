@@ -11,14 +11,9 @@
                 title="LENEX Batch #{{ $batch->id }}"
                 subtitle="Readonly audit view (committed)."
             />
-
             <div class="flex items-center gap-2">
                 <x-ui.button href="{{ route('imports.lenex.history') }}">
                     Back
-                </x-ui.button>
-
-                <x-ui.button href="{{ route('imports.lenex.create') }}">
-                    New Import
                 </x-ui.button>
             </div>
         </div>
