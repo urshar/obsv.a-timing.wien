@@ -57,9 +57,17 @@ return new class extends Migration
             $table->string('name')->nullable();
             $table->string('handicap')->nullable();
 
+            $table->string('sport_class_group')->nullable(); // PI, VI, MI, HI, relay, etc.
+            $table->text('sport_classes')->nullable();       // JSON array
+            $table->unsignedInteger('points_cap')->nullable(); // e.g. 49
+            $table->string('sport_class_raw')->nullable();
+
+            $table->string('canonical_key')->nullable();
+
             $table->timestamps();
 
-            $table->unique(['meet_id', 'code'], 'meet_age_groups_meet_id_code_unique');
+            $table->unique(['meet_id', 'canonical_key'], 'meet_age_groups_meet_canonical_unique');
+            $table->unique(['meet_id', 'code']);
         });
 
         Schema::create('meet_sessions', function (Blueprint $table) {

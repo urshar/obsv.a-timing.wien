@@ -214,6 +214,7 @@
                                         <th class="p-2">Dist</th>
                                         <th class="p-2">Stroke</th>
                                         <th class="p-2">Round</th>
+                                        <th class="p-2">Age group</th>
                                         <th class="p-2">Relay</th>
                                         <th class="p-2"></th>
                                     </tr>
@@ -257,6 +258,25 @@
                                                 <input name="sessions[{{ $si }}][events][{{ $ei }}][round]"
                                                        value="{{ old("sessions.$si.events.$ei.round", $e->round) }}"
                                                        class="w-28 rounded-lg border-slate-300"/>
+                                            </td>
+                                            <td class="p-2">
+                                                @php($selAg = old("sessions.$si.events.$ei.meet_age_group_id", $e->meet_age_group_id))
+                                                <select name="sessions[{{ $si }}][events][{{ $ei }}][meet_age_group_id]"
+                                                        class="rounded-lg border-slate-300 w-64">
+                                                    <option value="">—</option>
+                                                    @foreach($ageGroups as $ag)
+                                                        <option
+                                                            value="{{ $ag->id }}" @selected((string)$selAg === (string)$ag->id)>
+                                                            {{ $ag->name ?? '—' }}
+                                                            @if($ag->gender)
+                                                                ({{ $ag->gender }})
+                                                            @endif
+                                                            @if($ag->code)
+                                                                · {{ $ag->code }}
+                                                            @endif
+                                                        </option>
+                                                    @endforeach
+                                                </select>
                                             </td>
                                             <td class="p-2">
                                                 <input type="checkbox"
@@ -303,21 +323,21 @@
             const i = agIndex++;
             const tr = document.createElement('tr');
             tr.innerHTML = `
-        <td class="p-2"><input name="age_groups[${i}][code]" class="w-28 rounded-lg border-slate-300" /></td>
-        <td class="p-2">
-            <select name="age_groups[${i}][gender]" class="rounded-lg border-slate-300">
-                <option value="">—</option><option value="F">F</option><option value="M">M</option><option value="X">X</option>
-            </select>
-        </td>
-        <td class="p-2"><input name="age_groups[${i}][min_age]" class="w-20 rounded-lg border-slate-300" /></td>
-        <td class="p-2"><input name="age_groups[${i}][max_age]" class="w-20 rounded-lg border-slate-300" /></td>
-        <td class="p-2"><input name="age_groups[${i}][name]" class="w-80 rounded-lg border-slate-300" /></td>
-        <td class="p-2"><input name="age_groups[${i}][handicap]" class="w-28 rounded-lg border-slate-300" /></td>
-        <td class="p-2 text-right">
-            <button type="button" class="rounded-lg px-3 py-2 text-sm font-semibold bg-rose-600 text-white hover:bg-rose-500"
-                    onclick="removeRow(this)">Delete</button>
-        </td>
-    `;
+                <td class="p-2"><input name="age_groups[${i}][code]" class="w-28 rounded-lg border-slate-300" /></td>
+                <td class="p-2">
+                    <select name="age_groups[${i}][gender]" class="rounded-lg border-slate-300">
+                        <option value="">—</option><option value="F">F</option><option value="M">M</option><option value="X">X</option>
+                    </select>
+                </td>
+                <td class="p-2"><input name="age_groups[${i}][min_age]" class="w-20 rounded-lg border-slate-300" /></td>
+                <td class="p-2"><input name="age_groups[${i}][max_age]" class="w-20 rounded-lg border-slate-300" /></td>
+                <td class="p-2"><input name="age_groups[${i}][name]" class="w-80 rounded-lg border-slate-300" /></td>
+                <td class="p-2"><input name="age_groups[${i}][handicap]" class="w-28 rounded-lg border-slate-300" /></td>
+                <td class="p-2 text-right">
+                    <button type="button" class="rounded-lg px-3 py-2 text-sm font-semibold bg-rose-600 text-white hover:bg-rose-500"
+                            onclick="removeRow(this)">Delete</button>
+                </td>
+            `;
             body.appendChild(tr);
         }
 
@@ -329,79 +349,93 @@
             const block = document.createElement('div');
             block.className = 'rounded-lg ring-1 ring-slate-200 p-4 space-y-4';
             block.innerHTML = `
-        <div class="flex items-center justify-between">
-            <div class="font-semibold">Session</div>
-            <button type="button" class="rounded-lg px-3 py-2 text-sm font-semibold bg-rose-600 text-white hover:bg-rose-500"
-                    onclick="removeRow(this,true)">Delete session</button>
-        </div>
+                <div class="flex items-center justify-between">
+                    <div class="font-semibold">Session</div>
+                    <button type="button" class="rounded-lg px-3 py-2 text-sm font-semibold bg-rose-600 text-white hover:bg-rose-500"
+                            onclick="removeRow(this,true)">Delete session</button>
+                </div>
 
-        <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <label class="block">
-                <div class="text-sm font-medium text-slate-700">Session no</div>
-                <input name="sessions[${si}][session_no]" class="mt-1 w-full rounded-lg border-slate-300" />
-            </label>
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                    <label class="block">
+                        <div class="text-sm font-medium text-slate-700">Session no</div>
+                        <input name="sessions[${si}][session_no]" class="mt-1 w-full rounded-lg border-slate-300" />
+                    </label>
 
-            <label class="block md:col-span-2">
-                <div class="text-sm font-medium text-slate-700">Name</div>
-                <input name="sessions[${si}][name]" class="mt-1 w-full rounded-lg border-slate-300" />
-            </label>
+                    <label class="block md:col-span-2">
+                        <div class="text-sm font-medium text-slate-700">Name</div>
+                        <input name="sessions[${si}][name]" class="mt-1 w-full rounded-lg border-slate-300" />
+                    </label>
 
-            <label class="block">
-                <div class="text-sm font-medium text-slate-700">Date</div>
-                <input type="date" name="sessions[${si}][date]" class="mt-1 w-full rounded-lg border-slate-300" />
-            </label>
+                    <label class="block">
+                        <div class="text-sm font-medium text-slate-700">Date</div>
+                        <input type="date" name="sessions[${si}][date]" class="mt-1 w-full rounded-lg border-slate-300" />
+                    </label>
 
-            <label class="block">
-                <div class="text-sm font-medium text-slate-700">Start time (HH:MM)</div>
-                <input name="sessions[${si}][start_time]" class="mt-1 w-full rounded-lg border-slate-300" />
-            </label>
-        </div>
+                    <label class="block">
+                        <div class="text-sm font-medium text-slate-700">Start time (HH:MM)</div>
+                        <input name="sessions[${si}][start_time]" class="mt-1 w-full rounded-lg border-slate-300" />
+                    </label>
+                </div>
 
-        <div class="flex items-center justify-between">
-            <div class="font-medium">Events</div>
-            <button type="button"
-                    class="rounded-lg px-3 py-2 text-sm font-semibold bg-white text-slate-900 ring-1 ring-inset ring-slate-300 hover:bg-slate-50"
-                    onclick="addEventRow(this, ${si})">
-                Add event
-            </button>
-        </div>
+                <div class="flex items-center justify-between">
+                    <div class="font-medium">Events</div>
+                    <button type="button"
+                            class="rounded-lg px-3 py-2 text-sm font-semibold bg-white text-slate-900 ring-1 ring-inset ring-slate-300 hover:bg-slate-50"
+                            onclick="addEventRow(this, ${si})">
+                        Add event
+                    </button>
+                </div>
 
-        <div class="overflow-auto">
-            <table class="min-w-full text-sm">
-                <thead class="text-left text-slate-600">
-                    <tr>
-                        <th class="p-2">No</th><th class="p-2">Name</th><th class="p-2">G</th><th class="p-2">Dist</th>
-                        <th class="p-2">Stroke</th><th class="p-2">Round</th><th class="p-2">Relay</th><th class="p-2"></th>
-                    </tr>
-                </thead>
-                <tbody class="divide-y divide-slate-100" data-session-events="${si}"></tbody>
-            </table>
-        </div>
-    `;
+                <div class="overflow-auto">
+                    <table class="min-w-full text-sm">
+                        <thead class="text-left text-slate-600">
+                            <tr>
+                                <th class="p-2">No</th><th class="p-2">Name</th><th class="p-2">G</th><th class="p-2">Dist</th>
+                                <th class="p-2">Stroke</th><th class="p-2">Round</th><th class="p-2">Age group</th><th class="p-2">Relay</th><th class="p-2"></th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-100" data-session-events="${si}"></tbody>
+                    </table>
+                </div>
+            `;
             wrap.appendChild(block);
         }
+
+        const ageGroupOptionsHtml = `{!! collect($ageGroups)->map(function ($ag) {
+            $label = e($ag->name ?? '—');
+            if (!empty($ag->gender)) $label .= ' (' . e($ag->gender) . ')';
+            if (!empty($ag->code)) $label .= ' · ' . e($ag->code);
+            return '<option value="' . (int)$ag->id . '">' . $label . '</option>';
+        })->implode('') !!}`;
 
         function addEventRow(btn, si) {
             const tbody = btn.closest('.rounded-lg').querySelector(`tbody[data-session-events="${si}"]`);
             const idx = tbody.children.length;
             const tr = document.createElement('tr');
             tr.innerHTML = `
-        <td class="p-2"><input name="sessions[${si}][events][${idx}][event_no]" class="w-20 rounded-lg border-slate-300" /></td>
-        <td class="p-2"><input name="sessions[${si}][events][${idx}][name]" class="w-96 rounded-lg border-slate-300" /></td>
-        <td class="p-2">
-            <select name="sessions[${si}][events][${idx}][gender]" class="rounded-lg border-slate-300">
-                <option value="">—</option><option value="F">F</option><option value="M">M</option><option value="X">X</option>
-            </select>
-        </td>
-        <td class="p-2"><input name="sessions[${si}][events][${idx}][distance]" class="w-24 rounded-lg border-slate-300" /></td>
-        <td class="p-2"><input name="sessions[${si}][events][${idx}][stroke]" class="w-24 rounded-lg border-slate-300" /></td>
-        <td class="p-2"><input name="sessions[${si}][events][${idx}][round]" class="w-28 rounded-lg border-slate-300" /></td>
-        <td class="p-2"><input type="checkbox" name="sessions[${si}][events][${idx}][is_relay]" value="1" /></td>
-        <td class="p-2 text-right">
-            <button type="button" class="rounded-lg px-3 py-2 text-sm font-semibold bg-rose-600 text-white hover:bg-rose-500"
-                    onclick="removeRow(this)">Delete</button>
-        </td>
-    `;
+                <td class="p-2"><input name="sessions[${si}][events][${idx}][event_no]" class="w-20 rounded-lg border-slate-300" /></td>
+                <td class="p-2"><input name="sessions[${si}][events][${idx}][name]" class="w-96 rounded-lg border-slate-300" /></td>
+                <td class="p-2">
+                    <select name="sessions[${si}][events][${idx}][gender]" class="rounded-lg border-slate-300">
+                        <option value="">—</option><option value="F">F</option><option value="M">M</option><option value="X">X</option>
+                    </select>
+                </td>
+                <td class="p-2"><input name="sessions[${si}][events][${idx}][distance]" class="w-24 rounded-lg border-slate-300" /></td>
+                <td class="p-2"><input name="sessions[${si}][events][${idx}][stroke]" class="w-24 rounded-lg border-slate-300" /></td>
+                <td class="p-2"><input name="sessions[${si}][events][${idx}][round]" class="w-28 rounded-lg border-slate-300" /></td>
+                <td class="p-2">
+                  <select name="sessions[${si}][events][${idx}][meet_age_group_id]" class="rounded-lg border-slate-300 w-64">
+                    <option value="">—</option>
+                    ${ageGroupOptionsHtml}
+                  </select>
+                </td>
+
+                <td class="p-2"><input type="checkbox" name="sessions[${si}][events][${idx}][is_relay]" value="1" /></td>
+                <td class="p-2 text-right">
+                    <button type="button" class="rounded-lg px-3 py-2 text-sm font-semibold bg-rose-600 text-white hover:bg-rose-500"
+                            onclick="removeRow(this)">Delete</button>
+                </td>
+            `;
             tbody.appendChild(tr);
         }
     </script>

@@ -42,10 +42,20 @@ Route::prefix('imports/lenex')->name('imports.lenex.')->group(function () {
 
     Route::get('/batch/{batch}/meet-structure', [LenexMeetStructureController::class, 'show'])
         ->name('meet_structure.show');
-    Route::get('/batch/{batch}/meet-structure/edit', [LenexMeetStructureController::class, 'edit'])
-        ->name('meet_structure.edit');
-    Route::put('/batch/{batch}/meet-structure', [LenexMeetStructureController::class, 'update'])
-        ->name('meet_structure.update');
+
+    // NEU: Tree + Detail (Splash-like)
+    Route::get('/batch/{batch}/meet-structure/tree', [LenexMeetStructureController::class, 'tree'])
+        ->name('meet_structure.tree');
+    Route::get('/batch/{batch}/meet-structure/events/{event}/edit', [LenexMeetStructureController::class, 'editEvent'])
+        ->name('meet_structure.events.edit');
+    Route::put('/batch/{batch}/meet-structure/events/{event}', [LenexMeetStructureController::class, 'updateEvent'])
+        ->name('meet_structure.events.update');
+    Route::get('/batch/{batch}/meet-structure/events/{event}/age-groups',
+        [LenexMeetStructureController::class, 'editEventAgeGroups'])
+        ->name('meet_structure.events.age_groups.edit');
+    Route::put('/batch/{batch}/meet-structure/events/{event}/age-groups',
+        [LenexMeetStructureController::class, 'updateEventAgeGroups'])
+        ->name('meet_structure.events.age_groups.update');
 
     Route::get('/history', [LenexImportController::class, 'history'])->name('history');
     Route::get('/history/{batch}', [LenexImportController::class, 'historyShow'])->name('history.show');

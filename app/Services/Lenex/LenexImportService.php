@@ -167,6 +167,19 @@ class LenexImportService
     |--------------------------------------------------------------------------
     */
 
+    private function isStructureOnly(SimpleXMLElement $xml): bool
+    {
+        $hasResults =
+            ! empty($xml->xpath('//RESULT')) ||
+            ! empty($xml->xpath('//RESULTS'));
+
+        $hasEntries =
+            ! empty($xml->xpath('//ENTRY')) ||
+            ! empty($xml->xpath('//ENTRIES'));
+
+        return ! $hasResults && ! $hasEntries;
+    }
+
     private function createMeetIssueAndDefaultMapping(ImportBatch $batch, array $meetInfo): void
     {
         $suggestions = $this->suggestMeets($meetInfo);
@@ -438,6 +451,12 @@ class LenexImportService
         );
     }
 
+    /*
+    |--------------------------------------------------------------------------
+    | Meet + Facility mapping
+    |--------------------------------------------------------------------------
+    */
+
     /**
      * Resolve nation_id from LENEX nation (IOC code only, e.g. AUT, GER, ...).
      */
@@ -455,12 +474,6 @@ class LenexImportService
 
         return $row?->id ? (int) $row->id : null;
     }
-
-    /*
-    |--------------------------------------------------------------------------
-    | Meet + Facility mapping
-    |--------------------------------------------------------------------------
-    */
 
     private function buildAthleteIssues(ImportBatch $batch, SimpleXMLElement $xml): array
     {
@@ -496,6 +509,12 @@ class LenexImportService
         return ['count' => $count];
     }
 
+    /*
+    |--------------------------------------------------------------------------
+    | Structure import
+    |--------------------------------------------------------------------------
+    */
+
     private function extractAthletesFromXml(SimpleXMLElement $xml): array
     {
         $nodes = $xml->xpath('//ATHLETE') ?: [];
@@ -510,7 +529,7 @@ class LenexImportService
 
     /*
     |--------------------------------------------------------------------------
-    | Structure import
+    | Entries / Results import with event fallback
     |--------------------------------------------------------------------------
     */
 
@@ -549,12 +568,6 @@ class LenexImportService
             'gender' => $gender,
         ];
     }
-
-    /*
-    |--------------------------------------------------------------------------
-    | Entries / Results import with event fallback
-    |--------------------------------------------------------------------------
-    */
 
     private function athleteSourceKey(?string $ln, ?string $fn, ?int $by): string
     {
@@ -606,6 +619,12 @@ class LenexImportService
     {
         return app(LenexStructureExtractor::class)->extract($xml);
     }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Entity resolution (mappings)
+    |--------------------------------------------------------------------------
+    */
 
     /**
      * @throws Throwable
@@ -679,12 +698,6 @@ class LenexImportService
         });
     }
 
-    /*
-    |--------------------------------------------------------------------------
-    | Entity resolution (mappings)
-    |--------------------------------------------------------------------------
-    */
-
     private function resolveOrCreateMeet(ImportBatch $batch, SimpleXMLElement $xml): Meet
     {
         $mapping = $batch->mappings()
@@ -744,6 +757,12 @@ class LenexImportService
         DB::table('meet_age_groups')->where('meet_id', $meet->id)->delete();
     }
 
+    /*
+    |--------------------------------------------------------------------------
+    | Writes
+    |--------------------------------------------------------------------------
+    */
+
     private function applyFacilityToMeetIfMapped(ImportBatch $batch, Meet $meet): void
     {
         $mapping = $batch->mappings()->where('entity_type', 'facility')->where('source_key', 'facility')->first();
@@ -780,12 +799,6 @@ class LenexImportService
         }
     }
 
-    /*
-    |--------------------------------------------------------------------------
-    | Writes
-    |--------------------------------------------------------------------------
-    */
-
     private function xmlHasStructure(SimpleXMLElement $xml): bool
     {
         return
@@ -799,25 +812,45 @@ class LenexImportService
         $structure = app(LenexStructureExtractor::class)->extract($xml);
         $now = now();
 
-        // AGE GROUPS
+        /*
+         * AGE GROUPS (canonical)
+         * - Dedupe auf meet_id + canonical_key
+         * - LENEX code bleibt als mapping in lenex_age_group_maps
+         */
         $ageRows = [];
 
         foreach (($structure['age_groups'] ?? []) as $ag) {
-            $code = $this->normString((string) ($ag['code'] ?? null), 50);
-            if (! $code) {
+            $lenexCode = $this->normString((string) ($ag['code'] ?? null), 50);
+            if (! $lenexCode) {
                 continue;
             }
 
+            $minAge = isset($ag['min']) ? (int) $ag['min'] : null;
+            $maxAge = isset($ag['max']) ? (int) $ag['max'] : null;
+            $gender = $this->normGender($ag['gender'] ?? null);
+
+            // handicap kann "14" oder "1,2,3" sein → als string behalten (fachlich relevant)
+            $handicap = $this->normString((string) ($ag['handicap'] ?? null));
+
+            // canonical_key: absichtlich OHNE name (Name kann frei vergeben werden)
+            $canonicalKey = implode('|', [
+                $gender ?: '',
+                (string) ($minAge ?? ''),
+                (string) ($maxAge ?? ''),
+                $handicap ?: '',
+            ]);
+
             $ageRows[] = [
                 'meet_id' => $meet->id,
-                'code' => $code,
-                'min_age' => isset($ag['min']) ? (int) $ag['min'] : null,
-                'max_age' => isset($ag['max']) ? (int) $ag['max'] : null,
+                'canonical_key' => $canonicalKey,
 
-                // handicap kann "14" oder "1,2,3" sein → string speichern
-                'handicap' => $this->normString((string) ($ag['handicap'] ?? null)),
+                // optional: ein "repräsentativer" Code im record (nicht für Join verwenden!)
+                'code' => $lenexCode,
 
-                'gender' => $this->normGender($ag['gender'] ?? null),
+                'min_age' => $minAge,
+                'max_age' => $maxAge,
+                'handicap' => $handicap,
+                'gender' => $gender,
                 'name' => $this->normString($ag['name'] ?? null),
 
                 'updated_at' => $now,
@@ -825,20 +858,62 @@ class LenexImportService
             ];
         }
 
-        $this->upsertWithoutTouchingCreatedAt(
-            'meet_age_groups',
-            $ageRows,
-            ['meet_id', 'code'],
-            ['min_age', 'max_age', 'handicap', 'gender', 'name', 'updated_at']
-        );
+        if (! empty($ageRows)) {
+            // Upsert auf canonical_key statt code
+            $this->upsertWithoutTouchingCreatedAt(
+                'meet_age_groups',
+                $ageRows,
+                ['meet_id', 'canonical_key'],
+                ['code', 'min_age', 'max_age', 'handicap', 'gender', 'name', 'updated_at']
+            );
+        }
 
-        $ageGroupIdByCode = DB::table('meet_age_groups')
+        // canonical_key -> id
+        $ageGroupIdByCanonical = DB::table('meet_age_groups')
             ->where('meet_id', $meet->id)
-            ->pluck('id', 'code')
+            ->pluck('id', 'canonical_key')
             ->all();
 
-        // SESSIONS
+        // LENEX code -> meet_age_group_id mapping schreiben
+        $mapRows = [];
+        foreach ($ageRows as $r) {
+            $lenexCode = $r['code'] ?? null; // der LENEX code
+            $canonical = $r['canonical_key'] ?? null;
+            if (! $lenexCode || ! $canonical) {
+                continue;
+            }
+
+            $agId = $ageGroupIdByCanonical[$canonical] ?? null;
+            if (! $agId) {
+                continue;
+            }
+
+            $mapRows[] = [
+                'meet_id' => $meet->id,
+                'lenex_code' => (string) $lenexCode,
+                'meet_age_group_id' => (int) $agId,
+            ];
+        }
+
+        if (! empty($mapRows)) {
+            DB::table('lenex_age_group_maps')->upsert(
+                $mapRows,
+                ['meet_id', 'lenex_code'],
+                ['meet_age_group_id']
+            );
+        }
+
+        // Für Pivot/Events: LENEX code -> canonical meet_age_group_id
+        $ageGroupIdByLenexCode = DB::table('lenex_age_group_maps')
+            ->where('meet_id', $meet->id)
+            ->pluck('meet_age_group_id', 'lenex_code')
+            ->all();
+
+        /*
+         * SESSIONS
+         */
         $sessionRows = [];
+
         foreach (($structure['sessions'] ?? []) as $s) {
             $no = isset($s['no']) ? (int) $s['no'] : null;
             if ($no === null) {
@@ -855,20 +930,27 @@ class LenexImportService
             ];
         }
 
-        $this->upsertWithoutTouchingCreatedAt(
-            'meet_sessions',
-            $sessionRows,
-            ['meet_id', 'session_no'],
-            ['date', 'start_time', 'updated_at']
-        );
+        if (! empty($sessionRows)) {
+            $this->upsertWithoutTouchingCreatedAt(
+                'meet_sessions',
+                $sessionRows,
+                ['meet_id', 'session_no'],
+                ['date', 'start_time', 'updated_at']
+            );
+        }
 
         $sessionIdByNo = DB::table('meet_sessions')
             ->where('meet_id', $meet->id)
             ->pluck('id', 'session_no')
             ->all();
 
-        // EVENTS
+        /*
+         * EVENTS
+         * - speichert nur Event-Stammdaten
+         * - Zuordnung zu AgeGroups über Pivot age_group_event
+         */
         $eventRows = [];
+        $eventAgeGroupCodesByKey = []; // "{meet_session_id}:{event_no}" => [lenex_code, lenex_code, ...]
 
         foreach (($structure['sessions'] ?? []) as $s) {
             $no = isset($s['no']) ? (int) $s['no'] : null;
@@ -887,30 +969,182 @@ class LenexImportService
                     continue;
                 }
 
-                $ageGroupCode = $this->normString($e['age_group'] ?? null, 50);
-                $ageGroupId = $ageGroupCode ? ($ageGroupIdByCode[$ageGroupCode] ?? null) : null;
+                // Extractor: age_groups ist array von LENEX codes
+                $ageGroupCodes = $e['age_groups'] ?? [];
+                if (! is_array($ageGroupCodes)) {
+                    $ageGroupCodes = [];
+                }
+
+                $ageGroupCodes = array_values(array_unique(array_filter(array_map(
+                    fn ($c) => $this->normString($c, 50),
+                    $ageGroupCodes
+                ))));
+
+                $key = ((int) $sessionId).':'.($eventNo);
+                $eventAgeGroupCodesByKey[$key] = $ageGroupCodes;
+
+                // optional/legacy: erste canonical AG ins meet_events schreiben
+                $legacyAgId = null;
+                foreach ($ageGroupCodes as $c) {
+                    $legacyAgId = $ageGroupIdByLenexCode[$c] ?? null;
+                    if ($legacyAgId) {
+                        break;
+                    }
+                }
 
                 $eventRows[] = [
                     'meet_session_id' => $sessionId,
                     'event_no' => $eventNo,
-                    'meet_age_group_id' => $ageGroupId,
+
+                    // optional/legacy (kannst du später entfernen)
+                    'meet_age_group_id' => $legacyAgId,
+
                     'name' => $this->normString($e['name'] ?? null),
                     'gender' => $this->normGender($e['gender'] ?? null),
                     'distance' => isset($e['distance']) ? (int) $e['distance'] : null,
                     'stroke' => $this->normString($e['stroke'] ?? null, 50),
                     'round' => $this->normString($e['round'] ?? null, 50),
                     'is_relay' => (int) ($e['is_relay'] ?? false),
+
                     'updated_at' => $now,
                     'created_at' => $now,
                 ];
             }
         }
 
-        $this->upsertWithoutTouchingCreatedAt(
-            'meet_events',
-            $eventRows,
-            ['meet_session_id', 'event_no'],
-            ['meet_age_group_id', 'name', 'gender', 'distance', 'stroke', 'round', 'is_relay', 'updated_at']
+        if (! empty($eventRows)) {
+            $this->upsertWithoutTouchingCreatedAt(
+                'meet_events',
+                $eventRows,
+                ['meet_session_id', 'event_no'],
+                ['meet_age_group_id', 'name', 'gender', 'distance', 'stroke', 'round', 'is_relay', 'updated_at']
+            );
+        }
+
+        /*
+         * PIVOT: age_group_event
+         * - Rebuild pro import (idempotent)
+         * - verwendet Mapping lenex_code -> canonical meet_age_group_id
+         */
+        $eventIdRows = DB::table('meet_events')
+            ->whereIn('meet_session_id', array_values($sessionIdByNo))
+            ->select('id', 'meet_session_id', 'event_no')
+            ->get();
+
+        $eventIdByKey = [];
+        $eventIds = [];
+
+        foreach ($eventIdRows as $r) {
+            $k = ((int) $r->meet_session_id).':'.((int) $r->event_no);
+            $eventIdByKey[$k] = (int) $r->id;
+            $eventIds[] = (int) $r->id;
+        }
+
+        // alte Zuordnungen löschen (für diese Events)
+        if (! empty($eventIds)) {
+            DB::table('age_group_event')->whereIn('meet_event_id', $eventIds)->delete();
+        }
+
+        $pivotRows = [];
+        foreach ($eventAgeGroupCodesByKey as $k => $codes) {
+            $eventId = $eventIdByKey[$k] ?? null;
+            if (! $eventId) {
+                continue;
+            }
+
+            foreach ($codes as $lenexCode) {
+                $agId = $ageGroupIdByLenexCode[$lenexCode] ?? null;
+                if (! $agId) {
+                    continue;
+                }
+
+                $pivotRows[] = [
+                    'meet_event_id' => $eventId,
+                    'age_group_id' => (int) $agId,
+                ];
+            }
+        }
+
+        if (! empty($pivotRows)) {
+            DB::table('age_group_event')->upsert(
+                $pivotRows,
+                ['meet_event_id', 'age_group_id'],
+                []
+            );
+        }
+    }
+
+    private function normString(?string $value, int $maxLen = 255): ?string
+    {
+        if ($value === null) {
+            return null;
+        }
+        $v = trim($value);
+        if ($v === '') {
+            return null;
+        }
+
+        return mb_substr($v, 0, $maxLen);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Small helpers (DRY)
+    |--------------------------------------------------------------------------
+    */
+
+    private function normGender(?string $value): ?string
+    {
+        if ($value === null) {
+            return null;
+        }
+        $v = strtoupper(trim($value));
+        if ($v === '') {
+            return null;
+        }
+
+        // häufige Varianten abfangen
+        if (in_array($v, ['M', 'MALE', 'MAN'], true)) {
+            return 'M';
+        }
+        if (in_array($v, ['F', 'FEMALE', 'WOMAN'], true)) {
+            return 'F';
+        }
+
+        // LENEX/Meet-Setups haben manchmal X/MIXED/ALL
+        if (in_array($v, ['X', 'MIX', 'MIXED', 'A', 'ALL'], true)) {
+            return 'X';
+        }
+
+        // wenn dein System nur M/F erlaubt, hier stattdessen null zurückgeben
+        if (strlen($v) === 1) {
+            return $v;
+        }
+
+        return null;
+    }
+
+    /**
+     * Upsert ohne created_at-Überschreibung: nutzt Query Builder upsert().
+     *
+     * @param  array<int, array<string, mixed>>  $rows
+     * @param  array<int, string>  $uniqueBy
+     * @param  array<int, string>  $updateColumns
+     */
+    private function upsertWithoutTouchingCreatedAt(
+        string $table,
+        array $rows,
+        array $uniqueBy,
+        array $updateColumns
+    ): void {
+        if ($rows === []) {
+            return;
+        }
+
+        DB::table($table)->upsert(
+            $rows,
+            $uniqueBy,
+            $updateColumns
         );
     }
 
@@ -973,12 +1207,6 @@ class LenexImportService
         }
     }
 
-    /*
-    |--------------------------------------------------------------------------
-    | Reset (Variante A)
-    |--------------------------------------------------------------------------
-    */
-
     private function buildEventIndexesForMeet(Meet $meet): array
     {
         $meetEvents = DB::table('meet_events')
@@ -1008,12 +1236,6 @@ class LenexImportService
             'byComposite' => $byComposite,
         ];
     }
-
-    /*
-    |--------------------------------------------------------------------------
-    | Small helpers (DRY)
-    |--------------------------------------------------------------------------
-    */
 
     private function eventCompositeKey(
         ?int $distance,
@@ -1318,86 +1540,5 @@ class LenexImportService
         }
 
         return $value;
-    }
-
-    private function normString(?string $value, int $maxLen = 255): ?string
-    {
-        if ($value === null) {
-            return null;
-        }
-        $v = trim($value);
-        if ($v === '') {
-            return null;
-        }
-
-        return mb_substr($v, 0, $maxLen);
-    }
-
-    private function normGender(?string $value): ?string
-    {
-        if ($value === null) {
-            return null;
-        }
-        $v = strtoupper(trim($value));
-        if ($v === '') {
-            return null;
-        }
-
-        // häufige Varianten abfangen
-        if (in_array($v, ['M', 'MALE', 'MAN'], true)) {
-            return 'M';
-        }
-        if (in_array($v, ['F', 'FEMALE', 'WOMAN'], true)) {
-            return 'F';
-        }
-
-        // LENEX/Meet-Setups haben manchmal X/MIXED/ALL
-        if (in_array($v, ['X', 'MIX', 'MIXED', 'A', 'ALL'], true)) {
-            return 'X';
-        }
-
-        // wenn dein System nur M/F erlaubt, hier stattdessen null zurückgeben
-        if (strlen($v) === 1) {
-            return $v;
-        }
-
-        return null;
-    }
-
-    /**
-     * Upsert ohne created_at-Überschreibung: nutzt Query Builder upsert().
-     *
-     * @param  array<int, array<string, mixed>>  $rows
-     * @param  array<int, string>  $uniqueBy
-     * @param  array<int, string>  $updateColumns
-     */
-    private function upsertWithoutTouchingCreatedAt(
-        string $table,
-        array $rows,
-        array $uniqueBy,
-        array $updateColumns
-    ): void {
-        if ($rows === []) {
-            return;
-        }
-
-        DB::table($table)->upsert(
-            $rows,
-            $uniqueBy,
-            $updateColumns
-        );
-    }
-
-    private function isStructureOnly(SimpleXMLElement $xml): bool
-    {
-        $hasResults =
-            ! empty($xml->xpath('//RESULT')) ||
-            ! empty($xml->xpath('//RESULTS'));
-
-        $hasEntries =
-            ! empty($xml->xpath('//ENTRY')) ||
-            ! empty($xml->xpath('//ENTRIES'));
-
-        return ! $hasResults && ! $hasEntries;
     }
 }
