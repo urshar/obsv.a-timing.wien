@@ -4,6 +4,20 @@ namespace App\Support;
 
 final class ParaSwim
 {
+    public static function strokePrefix(?string $stroke): string
+    {
+        $s = strtoupper(trim((string) $stroke));
+
+        if ($s === 'BREAST') {
+            return 'SB';
+        }
+        if ($s === 'MEDLEY') {
+            return 'SM';
+        }
+
+        return 'S';
+    }
+
     public static function formatSportClasses(?string $raw): ?string
     {
         $raw = trim((string) $raw);
@@ -11,16 +25,14 @@ final class ParaSwim
             return null;
         }
 
-        // split CSV
         $parts = array_values(array_filter(array_map('trim', explode(',', $raw)), fn ($v) => $v !== ''));
-
         if (count($parts) === 0) {
             return null;
         }
 
-        // Alle numerisch?
-        $allNumeric = true;
+        // 1) rein numerisch? (z.B. "1,2,3,10,21")
         $nums = [];
+        $allNumeric = true;
 
         foreach ($parts as $p) {
             if (! preg_match('/^\d+$/', $p)) {
@@ -34,17 +46,20 @@ final class ParaSwim
             sort($nums);
             $nums = array_values(array_unique($nums));
 
-            if (count($nums) >= 2 && self::isContiguous($nums)) {
-                return $nums[0].'–'.$nums[count($nums) - 1];
-            }
+            $ranges = self::rangesFromSorted($nums);
 
-            return implode(', ', array_map('strval', $nums));
+            // "1–4, 5, 8–10, 21"
+            return implode(', ', array_map(function (array $r) {
+                [$a, $b] = $r;
+
+                return ($a === $b) ? (string) $a : ($a.'–'.$b);
+            }, $ranges));
         }
 
-        // Prefix+Num? (S11, SB3, SM10 etc.)
-        $allPrefixed = true;
+        // 2) Prefix+Num? (z.B. "S11,S12,S13,S15")
         $prefix = null;
-        $pNums = [];
+        $pnums = [];
+        $allPrefixed = true;
 
         foreach ($parts as $p) {
             if (! preg_match('/^([A-Z]+)\s*(\d+)$/i', $p, $m)) {
@@ -62,53 +77,96 @@ final class ParaSwim
                 break;
             }
 
-            $pNums[] = $num;
+            $pnums[] = $num;
         }
 
         if ($allPrefixed && $prefix !== null) {
-            sort($pNums);
-            $pNums = array_values(array_unique($pNums));
+            sort($pnums);
+            $pnums = array_values(array_unique($pnums));
 
-            if (count($pNums) >= 2 && self::isContiguous($pNums)) {
-                return $prefix.$pNums[0].'–'.$prefix.$pNums[count($pNums) - 1];
-            }
+            $ranges = self::rangesFromSorted($pnums);
 
-            return implode(', ', array_map(fn ($n) => $prefix.$n, $pNums));
+            // "S11–S13, S15"
+            return implode(', ', array_map(function (array $r) use ($prefix) {
+                [$a, $b] = $r;
+
+                return ($a === $b)
+                    ? ($prefix.$a)
+                    : ($prefix.$a.'–'.$prefix.$b);
+            }, $ranges));
         }
 
-        // Fallback: sauber mit "," joinen
+        // 3) Fallback: einfach sauber joinen
         return implode(', ', $parts);
     }
 
-    private static function isContiguous(array $nums): bool
+    private static function rangesFromSorted(array $nums): array
     {
+        // Erwartet: sortiert + unique
+        $ranges = [];
         $n = count($nums);
-        if ($n < 2) {
-            return false;
+
+        if ($n === 0) {
+            return $ranges;
         }
 
+        $start = $nums[0];
+        $prev = $nums[0];
+
         for ($i = 1; $i < $n; $i++) {
-            if ($nums[$i] !== $nums[$i - 1] + 1) {
-                return false;
+            $cur = $nums[$i];
+
+            if ($cur === $prev + 1) {
+                $prev = $cur;
+
+                continue;
+            }
+
+            // Block endet
+            $ranges[] = [$start, $prev];
+            $start = $cur;
+            $prev = $cur;
+        }
+
+        // letzten Block hinzufügen
+        $ranges[] = [$start, $prev];
+
+        return $ranges;
+    }
+
+    public static function ageLabel(?int $maxAge): string
+    {
+        // ParaSwim: nur 2 Altersklassen: ≤18 und offen,
+        // wenn max_age gesetzt und ≤ 18 → Jugend, sonst Offen
+        if ($maxAge !== null && $maxAge <= 18) {
+            return 'Jugend';
+        }
+
+        return 'Offen';
+    }
+
+    /**
+     * Parsed handicap CSV in integer set (z.B. "1,2,3,10" => [1,2,3,10])
+     */
+    public static function parseClasses(?string $raw): array
+    {
+        $raw = trim((string) $raw);
+        if ($raw === '') {
+            return [];
+        }
+
+        $parts = array_values(array_filter(array_map('trim', explode(',', $raw)), fn ($v) => $v !== ''));
+
+        $out = [];
+        foreach ($parts as $p) {
+            if (preg_match('/^\d+$/', $p)) {
+                $out[] = (int) $p;
             }
         }
 
-        return true;
-    }
+        $out = array_values(array_unique($out));
+        sort($out);
 
-    public static function strokePrefix(?string $stroke): string
-    {
-        $s = strtoupper(trim((string) $stroke));
-
-        // wenn du Werte wie "BREAST", "MEDLEY" verwendest
-        if ($s === 'BREAST') {
-            return 'SB';
-        }
-        if ($s === 'MEDLEY') {
-            return 'SM';
-        }
-
-        // FREE/BACK/FLY etc.
-        return 'S';
+        return $out;
     }
 }

@@ -6,7 +6,9 @@ use App\Models\ImportBatch;
 use App\Models\MeetAgeGroup;
 use App\Models\MeetEvent;
 use App\Models\MeetSession;
+use App\Support\ParaSwim;
 use Illuminate\Http\Request;
+use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 use Throwable;
@@ -91,17 +93,23 @@ class LenexMeetStructureController extends Controller
 
         $meetId = $batch->meet_id;
 
-        $meet = \DB::table('meets')->where('id', $meetId)->first();
+        $meet = DB::table('meets')->where('id', $meetId)->first();
 
         $sessions = MeetSession::query()
             ->where('meet_id', $meetId)
             ->orderBy('session_no')
-            ->with([
-                'meetEvents' => function ($q) {
-                    $q->orderBy('event_no');
-                },
-            ])
             ->get();
+
+        $sessionIds = $sessions->pluck('id')->all();
+
+        $eventsBySessionId = collect();
+        if (! empty($sessionIds)) {
+            $eventsBySessionId = MeetEvent::query()
+                ->whereIn('meet_session_id', $sessionIds)
+                ->orderBy('event_no')
+                ->get()
+                ->groupBy('meet_session_id');
+        }
 
         $ageGroups = MeetAgeGroup::query()
             ->where('meet_id', $meetId)
@@ -112,6 +120,7 @@ class LenexMeetStructureController extends Controller
             'batch' => $batch,
             'meet' => $meet,
             'sessions' => $sessions,
+            'eventsBySessionId' => $eventsBySessionId,
             'ageGroups' => $ageGroups,
             'selectedEvent' => null,
         ]);
@@ -307,7 +316,6 @@ class LenexMeetStructureController extends Controller
             }
 
             // 3) Sessions + Events sync
-
             if ($hasSessions) {
                 $incomingSessions = collect($data['sessions'] ?? [])
                     ->filter(fn ($r) => is_array($r))
@@ -391,46 +399,123 @@ class LenexMeetStructureController extends Controller
 
     public function editEventAgeGroups(Request $request, ImportBatch $batch, MeetEvent $event)
     {
+        // Sicherheitschecks
         abort_unless($batch->status === 'committed', 404);
         abort_unless($batch->type === 'meet_structure', 404);
-        abort_unless($batch->meet_id, 404);
+        abort_unless($batch->meet_id !== null, 404);
 
-        $meetId = (int) $batch->meet_id;
+        // Event muss zum Meet gehören
+        $event->loadMissing('meetSession');
+        abort_unless(
+            $event->meetSession && (int) $event->meetSession->meet_id === (int) $batch->meet_id,
+            404
+        );
 
-        $event->loadMissing('meetSession', 'meetAgeGroups');
-        abort_unless($event->meetSession && (int) $event->meetSession->meet_id === $meetId, 404);
-
-        // Filter / Search (serverseitig, stabil)
+        // Query-Parameter
         $q = trim((string) $request->query('q', ''));
-        $gender = trim((string) $request->query('gender', '')); // F/M/X/''
-
-        $ageGroupsQuery = MeetAgeGroup::query()->where('meet_id', $meetId);
-
-        if ($q !== '') {
-            $ageGroupsQuery->where(function ($sub) use ($q) {
-                $sub->where('name', 'like', "%{$q}%")
-                    ->orWhere('code', 'like', "%{$q}%")
-                    ->orWhere('handicap', 'like', "%{$q}%")
-                    ->orWhere('sport_class_raw', 'like', "%{$q}%");
-            });
+        $gender = strtoupper(trim((string) $request->query('gender', '')));
+        if (! in_array($gender, ['', 'F', 'M', 'X'], true)) {
+            $gender = '';
         }
 
-        if (in_array($gender, ['F', 'M', 'X'], true)) {
-            $ageGroupsQuery->where('gender', $gender);
-        }
-
-        $ageGroups = $ageGroupsQuery
-            ->orderBy('name')
-            ->paginate(50)
-            ->withQueryString();
-
+        // Bereits zugewiesene AgeGroups (Checkboxen)
+        $event->loadMissing('meetAgeGroups');
         $selectedIds = $event->meetAgeGroups->pluck('id')->all();
 
+        // Stroke Prefix (S / SB / SM)
+        $prefix = ParaSwim::strokePrefix($event->stroke);
+
+        /*
+         * 1) DB-Query (alles was gut in SQL geht)
+         */
+        $baseQuery = MeetAgeGroup::query()
+            ->where('meet_id', $batch->meet_id)
+            ->when($gender !== '', function ($query) use ($gender) {
+                $query->where('gender', $gender);
+            })
+            ->when($q !== '', function ($query) use ($q) {
+                $like = '%'.str_replace(['\\', '%', '_'], ['\\\\', '\%', '\_'], $q).'%';
+
+                $query->where(function ($qq) use ($like) {
+                    $qq->where('name', 'like', $like)
+                        ->orWhere('code', 'like', $like)
+                        ->orWhere('handicap', 'like', $like);
+                });
+            })
+            ->orderBy('name');
+
+        // Erst holen (Collection), weil danach Stroke/PI Filter in PHP
+        $ageGroups = $baseQuery->get();
+
+        /*
+         * 2) Stroke/PI Filter (PHP)
+         */
+        if (! $event->is_relay) {
+            $ageGroups = $ageGroups->filter(function ($ag) use ($prefix) {
+
+                // Klassen aus CSV parsen (z. B. "1,2,3,10")
+                $classes = ParaSwim::parseClasses($ag->handicap);
+
+                // Keine Klasseninfo → anzeigen
+                if (empty($classes)) {
+                    return true;
+                }
+
+                /*
+                 * PI pragmatisch erkennen:
+                 * PI = nur 1–10, keine 11/12/13/14/15/21
+                 */
+                $hasHigher = collect($classes)->contains(fn ($n) => $n >= 11);
+                $hasSpecial = collect($classes)->contains(fn ($n) => in_array($n, [14, 15, 21], true));
+
+                $isPI = ! $hasHigher && ! $hasSpecial;
+
+                // Nicht-PI → immer anzeigen
+                if (! $isPI) {
+                    return true;
+                }
+
+                $max = max($classes);
+
+                // BREAST → nur 1–9
+                if ($prefix === 'SB') {
+                    return $max <= 9;
+                }
+
+                // FREE / BACK / FLY / MEDLEY → 1–10
+                return $max <= 10;
+            })->values();
+        }
+
+        /*
+         * 3) Pagination nach Collection-Filter
+         */
+        $perPage = 60; // gern anpassen
+        $page = max(1, (int) $request->query('page', 1));
+        $total = $ageGroups->count();
+
+        $items = $ageGroups->slice(($page - 1) * $perPage, $perPage)->values();
+
+        $ageGroups = new LengthAwarePaginator(
+            $items,
+            $total,
+            $perPage,
+            $page,
+            [
+                'path' => $request->url(),
+                'query' => $request->query(),
+            ]
+        );
+
+        /*
+         * 4) View rendern
+         */
         return view('imports.lenex.meet_structure.event_age_groups', [
             'batch' => $batch,
             'event' => $event,
             'ageGroups' => $ageGroups,
             'selectedIds' => $selectedIds,
+            'prefix' => $prefix,
             'q' => $q,
             'gender' => $gender,
         ]);

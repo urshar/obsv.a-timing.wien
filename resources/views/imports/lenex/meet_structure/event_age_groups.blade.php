@@ -1,5 +1,17 @@
 @extends('layouts.app')
 
+@php
+    /** Fallbacks, falls Controller nichts übergibt */
+    $q = $q ?? (string) request()->query('q', '');
+    $gender = $gender ?? (string) request()->query('gender', '');
+
+    // Normalisieren (optional, aber sauber)
+    $gender = strtoupper(trim($gender));
+    if (!in_array($gender, ['','F','M','X'], true)) {
+        $gender = '';
+    }
+@endphp
+
 @section('content')
     <div class="max-w-5xl mx-auto p-6 space-y-6">
         <div class="flex items-start justify-between gap-4">
@@ -25,7 +37,8 @@
         @endif
 
         {{-- Filter --}}
-        <form method="GET" action="{{ route('imports.lenex.meet_structure.events.age_groups.edit', [$batch, $event]) }}"
+        <form method="GET"
+              action="{{ route('imports.lenex.meet_structure.events.age_groups.edit', [$batch, $event]) }}"
               class="rounded-lg bg-white ring-1 ring-slate-200 p-4">
             <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <label class="block md:col-span-2">
@@ -65,8 +78,12 @@
             @csrf
             @method('PUT')
 
+            @php
+                $total = method_exists($ageGroups, 'total') ? $ageGroups->total() : $ageGroups->count();
+            @endphp
+
             <div class="text-sm text-slate-600">
-                Showing {{ $ageGroups->count() }} of {{ $ageGroups->total() }} age groups
+                Showing {{ $ageGroups->count() }} of {{ $total }} age groups
                 (page {{ $ageGroups->currentPage() }}).
                 Selected overall: {{ count($selectedIds) }}.
             </div>
@@ -105,7 +122,7 @@
 
             <div class="flex items-center justify-between">
                 <div>
-                    {{ $ageGroups->links() }}
+                    {{ $ageGroups->appends(['q' => $q, 'gender' => $gender])->links() }}
                 </div>
 
                 <button type="submit"

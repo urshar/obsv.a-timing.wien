@@ -32,7 +32,8 @@
             </div>
         @endif
 
-        <form method="POST" action="{{ route('imports.lenex.meet_structure.update', $batch) }}" class="space-y-8">
+        <form method="POST" action="{{ route('imports.lenex.meet_structure.events.update', $batch) }}"
+              class="space-y-8">
             @csrf
             @method('PUT')
 
