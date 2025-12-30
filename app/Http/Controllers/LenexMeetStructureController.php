@@ -128,15 +128,21 @@ class LenexMeetStructureController extends Controller
 
     public function editEvent(ImportBatch $batch, MeetEvent $event)
     {
+        // Sicherheitschecks
         abort_unless($batch->status === 'committed', 404);
         abort_unless($batch->type === 'meet_structure', 404);
-        abort_unless($batch->meet_id, 404);
+        abort_unless($batch->meet_id !== null, 404);
 
-        $meetId = $batch->meet_id;
+        $meetId = (int) $batch->meet_id;
 
+        // Event muss zum Meet gehören
         $event->loadMissing('meetSession');
-        abort_unless($event->meetSession && (int) $event->meetSession->meet_id === (int) $meetId, 404);
+        abort_unless(
+            $event->meetSession && (int) $event->meetSession->meet_id === $meetId,
+            404
+        );
 
+        // Meet (du verwendest hier DB::table; ok, aber konsistent casten)
         $meet = DB::table('meets')->where('id', $meetId)->first();
 
         $sessions = MeetSession::query()
@@ -149,12 +155,14 @@ class LenexMeetStructureController extends Controller
             ])
             ->get();
 
+        // AgeGroups fürs Meet (für andere Teile / ggf. später)
         $ageGroups = MeetAgeGroup::query()
             ->where('meet_id', $meetId)
             ->orderBy('name')
             ->get();
 
-        $event->load('meetAgeGroups', 'meetSession');
+        // Wichtig: was tree rechts tatsächlich braucht
+        $event->loadMissing(['meetAgeGroups', 'meetSession']);
 
         return view('imports.lenex.meet_structure.tree', [
             'batch' => $batch,

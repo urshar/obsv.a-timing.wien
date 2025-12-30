@@ -1,135 +1,135 @@
 @extends('layouts.app')
 
 @php
-    /** Fallbacks, falls Controller nichts übergibt */
-    $q = $q ?? (string) request()->query('q', '');
-    $gender = $gender ?? (string) request()->query('gender', '');
+    use App\Support\ParaSwim;
 
-    // Normalisieren (optional, aber sauber)
-    $gender = strtoupper(trim($gender));
-    if (!in_array($gender, ['','F','M','X'], true)) {
-        $gender = '';
-    }
+    // robust, falls Controller nix setzt
+    $q = $q ?? request('q', '');
+    $gender = $gender ?? request('gender', '');
+
+    $isPaginator = is_object($ageGroups) && method_exists($ageGroups, 'total') && method_exists($ageGroups, 'links');
+    $total = $isPaginator ? (int) $ageGroups->total() : (is_countable($ageGroups) ? count($ageGroups) : 0);
+
+    $items = $isPaginator ? $ageGroups : $ageGroups;
 @endphp
 
 @section('content')
-    <div class="max-w-5xl mx-auto p-6 space-y-6">
+    <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
+
         <div class="flex items-start justify-between gap-4">
             <div>
-                <h1 class="text-xl font-semibold">Edit age groups</h1>
+                <h1 class="text-2xl font-semibold text-slate-900">Edit age groups</h1>
                 <div class="text-sm text-slate-600">
-                    Batch #{{ $batch->id }}
-                    · Event {{ $event->event_no ?? '—' }} — {{ $event->name ?? '—' }}
-                    · Session {{ $event->meetSession->session_no ?? '—' }}
+                    Event #{{ $event->event_no }} · {{ $event->name ?? '—' }}
+                    @if(!empty($prefix))
+                        · {{ $prefix }}
+                    @endif
                 </div>
             </div>
 
-            <a href="{{ route('imports.lenex.meet_structure.events.edit', [$batch, $event]) }}"
-               class="inline-flex items-center rounded-lg px-4 py-2 text-sm font-semibold bg-white text-slate-900 ring-1 ring-inset ring-slate-300 hover:bg-slate-50">
-                Back to event
+            <a href="{{ route('imports.lenex.meet_structure.events.edit', [$batch, $event]) }}">
+                <x-ui.button variant="secondary">Back</x-ui.button>
             </a>
         </div>
 
-        @if (session('status'))
-            <div class="rounded-lg bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200 p-3 text-sm">
-                {{ session('status') }}
-            </div>
-        @endif
-
-        {{-- Filter --}}
-        <form method="GET"
-              action="{{ route('imports.lenex.meet_structure.events.age_groups.edit', [$batch, $event]) }}"
-              class="rounded-lg bg-white ring-1 ring-slate-200 p-4">
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <label class="block md:col-span-2">
-                    <div class="text-sm font-medium text-slate-700">Search</div>
-                    <input name="q" value="{{ $q }}"
-                           placeholder="Name, code, handicap, raw list…"
-                           class="mt-1 w-full rounded-lg border-slate-300"/>
-                </label>
-
-                <label class="block">
-                    <div class="text-sm font-medium text-slate-700">Gender</div>
-                    <select name="gender" class="mt-1 w-full rounded-lg border-slate-300">
-                        <option value="" @selected($gender==='')>All</option>
-                        <option value="F" @selected($gender==='F')>F</option>
-                        <option value="M" @selected($gender==='M')>M</option>
-                        <option value="X" @selected($gender==='X')>X</option>
-                    </select>
-                </label>
-            </div>
-
-            <div class="mt-4 flex justify-end gap-2">
-                <a href="{{ route('imports.lenex.meet_structure.events.age_groups.edit', [$batch, $event]) }}"
-                   class="inline-flex items-center rounded-lg px-4 py-2 text-sm font-semibold bg-white text-slate-900 ring-1 ring-inset ring-slate-300 hover:bg-slate-50">
-                    Reset
-                </a>
-                <button type="submit"
-                        class="inline-flex items-center rounded-lg px-4 py-2 text-sm font-semibold bg-slate-900 text-white hover:bg-slate-800">
-                    Apply
-                </button>
-            </div>
-        </form>
-
-        {{-- Selection --}}
-        <form method="POST"
-              action="{{ route('imports.lenex.meet_structure.events.age_groups.update', [$batch, $event]) }}"
-              class="rounded-lg bg-white ring-1 ring-slate-200 p-4 space-y-4">
-            @csrf
-            @method('PUT')
-
-            @php
-                $total = method_exists($ageGroups, 'total') ? $ageGroups->total() : $ageGroups->count();
-            @endphp
-
-            <div class="text-sm text-slate-600">
-                Showing {{ $ageGroups->count() }} of {{ $total }} age groups
-                (page {{ $ageGroups->currentPage() }}).
-                Selected overall: {{ count($selectedIds) }}.
-            </div>
-
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
-                @foreach($ageGroups as $ag)
-                    @php($checked = in_array((int)$ag->id, array_map('intval', $selectedIds), true))
-
-                    <label class="flex items-start gap-3 rounded-lg ring-1 ring-slate-200 px-3 py-2">
-                        <input type="checkbox" name="age_group_ids[]" value="{{ $ag->id }}" class="mt-1"
-                            @checked($checked) />
-
-                        <div class="min-w-0">
-                            <div class="text-sm font-medium">
-                                {{ $ag->name ?? '—' }}
-                                @if($ag->gender)
-                                    <span class="text-slate-500">({{ $ag->gender }})</span>
-                                @endif
-                            </div>
-
-                            <div class="text-xs text-slate-600">
-                                @if($ag->code)
-                                    Code: {{ $ag->code }} ·
-                                @endif
-                                @if($ag->handicap)
-                                    Class: {{ $ag->handicap }} ·
-                                @endif
-                                @if($ag->sport_class_raw)
-                                    List: {{ $ag->sport_class_raw }}
-                                @endif
-                            </div>
+        <x-ui.card>
+            <x-ui.card-header>
+                <div class="flex items-center justify-between gap-3">
+                    <div>
+                        <div class="font-semibold text-slate-900">Available age groups</div>
+                        <div class="text-xs text-slate-600">
+                            {{ $total }} total
                         </div>
-                    </label>
-                @endforeach
-            </div>
+                    </div>
 
-            <div class="flex items-center justify-between">
-                <div>
-                    {{ $ageGroups->appends(['q' => $q, 'gender' => $gender])->links() }}
+                    <form method="GET"
+                          action="{{ route('imports.lenex.meet_structure.events.age_groups.edit', [$batch, $event]) }}"
+                          class="flex items-end gap-3">
+                        <x-ui.field label="Search">
+                            <x-ui.input name="q" value="{{ $q }}" placeholder="Name, code, classes…"/>
+                        </x-ui.field>
+
+                        <x-ui.field label="Gender">
+                            <x-ui.select name="gender">
+                                <option value="" {{ $gender === '' ? 'selected' : '' }}>All</option>
+                                <option value="M" {{ $gender === 'M' ? 'selected' : '' }}>M</option>
+                                <option value="F" {{ $gender === 'F' ? 'selected' : '' }}>F</option>
+                                <option value="X" {{ $gender === 'X' ? 'selected' : '' }}>X</option>
+                            </x-ui.select>
+                        </x-ui.field>
+
+                        <x-ui.button variant="secondary" type="submit">Filter</x-ui.button>
+                    </form>
                 </div>
+            </x-ui.card-header>
 
-                <button type="submit"
-                        class="inline-flex items-center rounded-lg px-4 py-2 text-sm font-semibold bg-slate-900 text-white hover:bg-slate-800">
-                    Save selection
-                </button>
-            </div>
-        </form>
+            <x-ui.card-body>
+                <form method="POST"
+                      action="{{ route('imports.lenex.meet_structure.events.age_groups.update', [$batch, $event]) }}"
+                      class="space-y-4">
+                    @csrf
+                    @method('PUT')
+
+                    @if($items->isEmpty())
+                        <div class="text-sm text-slate-600">No age groups found.</div>
+                    @else
+                        <div class="space-y-2">
+                            @foreach($items as $ag)
+                                @php
+                                    $checked = in_array($ag->id, $selectedIds ?? [], true);
+                                    $classes = ParaSwim::formatSportClasses($ag->handicap);
+                                @endphp
+
+                                <div class="rounded-lg border border-slate-200 p-3">
+                                    <div class="flex items-start justify-between gap-3">
+                                        <div class="min-w-0">
+                                            <div class="font-semibold text-slate-900 truncate">
+                                                {{ $ag->name ?? '—' }}
+                                            </div>
+
+                                            <div class="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-600">
+                                                @if($ag->gender)
+                                                    <span
+                                                        class="inline-flex items-center rounded-md bg-slate-100 px-2 py-0.5">{{ $ag->gender }}</span>
+                                                @endif
+
+                                                @if($classes !== '')
+                                                    <span
+                                                        class="inline-flex items-center rounded-md bg-slate-100 px-2 py-0.5">{{ $classes }}</span>
+                                                @endif
+
+                                                @if($ag->code)
+                                                    <span class="text-slate-400">Code: {{ $ag->code }}</span>
+                                                @endif
+                                            </div>
+                                        </div>
+
+                                        <div class="shrink-0 pt-1">
+                                            <x-ui.checkbox name="age_group_ids[]" value="{{ $ag->id }}"
+                                                           :checked="$checked">
+                                                Assign
+                                            </x-ui.checkbox>
+                                        </div>
+                                    </div>
+                                </div>
+                            @endforeach
+                        </div>
+                    @endif
+
+                    <div class="flex items-center justify-end gap-2 pt-2">
+                        <a href="{{ route('imports.lenex.meet_structure.events.edit', [$batch, $event]) }}">
+                            <x-ui.button variant="secondary" type="button">Cancel</x-ui.button>
+                        </a>
+                        <x-ui.button variant="primary" type="submit">Save age groups</x-ui.button>
+                    </div>
+                </form>
+            </x-ui.card-body>
+
+            @if($isPaginator)
+                <x-ui.card-footer>
+                    {{ $ageGroups->withQueryString()->links() }}
+                </x-ui.card-footer>
+            @endif
+        </x-ui.card>
     </div>
 @endsection
