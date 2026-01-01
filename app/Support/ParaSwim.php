@@ -58,7 +58,7 @@ final class ParaSwim
 
         // 2) Prefix+Num? (z.B. "S11,S12,S13,S15")
         $prefix = null;
-        $pnums = [];
+        $pNums = [];
         $allPrefixed = true;
 
         foreach ($parts as $p) {
@@ -77,14 +77,14 @@ final class ParaSwim
                 break;
             }
 
-            $pnums[] = $num;
+            $pNums[] = $num;
         }
 
         if ($allPrefixed && $prefix !== null) {
-            sort($pnums);
-            $pnums = array_values(array_unique($pnums));
+            sort($pNums);
+            $pNums = array_values(array_unique($pNums));
 
-            $ranges = self::rangesFromSorted($pnums);
+            $ranges = self::rangesFromSorted($pNums);
 
             // "S11–S13, S15"
             return implode(', ', array_map(function (array $r) use ($prefix) {
@@ -134,15 +134,21 @@ final class ParaSwim
         return $ranges;
     }
 
-    public static function ageLabel(?int $maxAge): string
+    public static function ageLabel(?int $minAge, ?int $maxAge): string
     {
-        // ParaSwim: nur 2 Altersklassen: ≤18 und offen,
-        // wenn max_age gesetzt und ≤ 18 → Jugend, sonst Offen
-        if ($maxAge !== null && $maxAge <= 18) {
-            return 'Jugend';
+        if ($minAge !== null && $maxAge !== null) {
+            return $minAge.'–'.$maxAge;
         }
 
-        return 'Offen';
+        if ($maxAge !== null) {
+            return '≤ '.$maxAge;
+        }
+
+        if ($minAge !== null) {
+            return '≥ '.$minAge;
+        }
+
+        return '';
     }
 
     /**

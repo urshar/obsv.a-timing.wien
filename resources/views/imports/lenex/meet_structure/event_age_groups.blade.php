@@ -78,6 +78,7 @@
                                 @php
                                     $checked = in_array($ag->id, $selectedIds ?? [], true);
                                     $classes = ParaSwim::formatSportClasses($ag->handicap);
+                                    $ageLabel = ParaSwim::ageLabel($ag->min_age, $ag->max_age);
                                 @endphp
 
                                 <div class="rounded-lg border border-slate-200 p-3">
@@ -89,13 +90,15 @@
 
                                             <div class="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-600">
                                                 @if($ag->gender)
-                                                    <span
-                                                        class="inline-flex items-center rounded-md bg-slate-100 px-2 py-0.5">{{ $ag->gender }}</span>
+                                                    <x-ui.badge>{{ $ag->gender }}</x-ui.badge>
                                                 @endif
 
                                                 @if($classes !== '')
-                                                    <span
-                                                        class="inline-flex items-center rounded-md bg-slate-100 px-2 py-0.5">{{ $classes }}</span>
+                                                    <x-ui.badge>{{ $classes }}</x-ui.badge>
+                                                @endif
+
+                                                @if($ageLabel !== '')
+                                                    <x-ui.badge>{{ $ageLabel }}</x-ui.badge>
                                                 @endif
 
                                                 @if($ag->code)

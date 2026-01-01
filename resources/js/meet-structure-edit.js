@@ -7,8 +7,13 @@
  * @property {number} sessionCount
  */
 
+/**
+ * @type {{ __MEET_STRUCTURE_EDIT__?: MeetStructureEditBootstrap }}
+ */
+const _g = globalThis;
+
 /** @type {MeetStructureEditBootstrap|undefined} */
-const BOOT = globalThis.__MEET_STRUCTURE_EDIT__;
+const BOOT = _g.__MEET_STRUCTURE_EDIT__;
 
 (function () {
     /** @param {string} id @returns {HTMLElement|null} */

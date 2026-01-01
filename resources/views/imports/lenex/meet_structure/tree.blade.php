@@ -255,11 +255,17 @@
                                                         <x-ui.badge>{{ $ag->gender }}</x-ui.badge>
                                                     @endif
 
-                                                    @php $classes = ParaSwim::formatSportClasses($ag->handicap); @endphp
+                                                    @php
+                                                        $classes = ParaSwim::formatSportClasses($ag->handicap);
+                                                        $ageLabel = ParaSwim::ageLabel($ag->min_age, $ag->max_age)
+                                                    @endphp
                                                     @if($classes !== '')
                                                         <x-ui.badge>{{ $classes }}</x-ui.badge>
                                                     @endif
 
+                                                    @if($ageLabel !== '')
+                                                        <x-ui.badge>{{ $ageLabel }}</x-ui.badge>
+                                                    @endif
                                                     <span class="text-slate-400">Code: {{ $ag->code }}</span>
                                                 </div>
                                             </div>

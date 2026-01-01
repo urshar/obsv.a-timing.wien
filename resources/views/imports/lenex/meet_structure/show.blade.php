@@ -1,7 +1,10 @@
 @extends('layouts.app')
 
 @php
-    use App\Models\MeetAgeGroup;use App\Models\MeetSession;use Illuminate\Support\Collection;
+    use App\Models\MeetAgeGroup;
+    use App\Models\MeetSession;
+    use App\Support\ParaSwim;
+    use Illuminate\Support\Collection;
 
     /** @var \Illuminate\Database\Eloquent\Collection|MeetSession[] $sessions */
     /** @var \Illuminate\Database\Eloquent\Collection|MeetAgeGroup[] $ageGroups */
@@ -65,6 +68,15 @@
                                             {{ $ag->gender ?? '' }}
                                             @if($ag->code)
                                                 · {{ $ag->code }}
+                                            @endif
+                                            @php
+                                                $ageLabel = ParaSwim::ageLabel($ag->min_age, $ag->max_age);
+                                            @endphp
+
+                                            @if($ageLabel !== '')
+                                                <div class="text-xs text-slate-500">
+                                                    {{ $ageLabel }}
+                                                </div>
                                             @endif
                                         </div>
                                     </div>

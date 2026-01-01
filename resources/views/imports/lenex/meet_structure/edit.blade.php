@@ -278,8 +278,14 @@
     {{-- Page-specific JS (Vite) --}}
     @vite('resources/js/meet_structure_edit.js')
 
+    @php
+        /** @var int $sessionCount */
+        $sessionCount = $sessions->count();
+    @endphp
+
     <script>
-        /** @type {{sessionCount:number}} */
-        window.__MEET_STRUCTURE_EDIT__ = {sessionCount: {{ $sessions->count() }}};
+        window.__MEET_STRUCTURE_EDIT__ = window.__MEET_STRUCTURE_EDIT__ || {};
+        window.__MEET_STRUCTURE_EDIT__.sessionCount = {{ $sessionCount }};
     </script>
+
 @endsection

@@ -45,7 +45,6 @@ final class Navigation
                     $out[] = $item;
                 }
 
-                continue;
             }
 
             // unknown types ignored
@@ -95,7 +94,6 @@ final class Navigation
                     $out[] = $item;
                 }
 
-                continue;
             }
 
             // dropdowns innerhalb dropdowns bewusst ignorieren
