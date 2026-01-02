@@ -47,6 +47,15 @@ return [
         ['type' => 'separator'],
 
         [
+            'type' => 'route',
+            'label' => 'Meetings',
+            'route' => 'meets.index',
+            'active' => ['meets.*'],
+        ],
+
+        ['type' => 'separator'],
+
+        [
             'type' => 'dropdown',
             'key' => 'imports',
             'label' => 'Imports',

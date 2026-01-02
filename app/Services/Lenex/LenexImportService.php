@@ -11,6 +11,7 @@ use App\Models\ImportMapping;
 use App\Models\Meet;
 use App\Support\Concerns\DeletesInChunks;
 use App\Support\Concerns\LenexXmlValueHelpers;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
@@ -659,6 +660,7 @@ class LenexImportService
             if ($batch->type === 'meet_structure' || $this->xmlHasStructure($xml)) {
                 $this->importStructure($xml, $meet);
             }
+            $this->applyMeetMetaFromXml($xml, $meet);
 
             if (in_array($batch->type, ['entries', 'results'], true)) {
                 $this->importEntriesAndOrResults($batch, $xml, $meet);
@@ -810,6 +812,8 @@ class LenexImportService
     private function importStructure(SimpleXMLElement $xml, Meet $meet): void
     {
         $structure = app(LenexStructureExtractor::class)->extract($xml);
+        $meta = $structure['meet'] ?? [];
+
         $now = now();
 
         /*
@@ -820,7 +824,7 @@ class LenexImportService
         $ageRows = [];
 
         foreach (($structure['age_groups'] ?? []) as $ag) {
-            $lenexCode = $this->normString((string) ($ag['code'] ?? null), 50);
+            $lenexCode = $this->normLenexId($ag['code'] ?? null);
             if (! $lenexCode) {
                 continue;
             }
@@ -890,7 +894,7 @@ class LenexImportService
 
             $mapRows[] = [
                 'meet_id' => $meet->id,
-                'lenex_code' => (string) $lenexCode,
+                'lenex_code' => (int) $lenexCode,
                 'meet_age_group_id' => (int) $agId,
             ];
         }
@@ -976,7 +980,7 @@ class LenexImportService
                 }
 
                 $ageGroupCodes = array_values(array_unique(array_filter(array_map(
-                    fn ($c) => $this->normString($c, 50),
+                    fn ($c) => $this->normLenexId($c),
                     $ageGroupCodes
                 ))));
 
@@ -1071,6 +1075,73 @@ class LenexImportService
                 ['meet_event_id', 'age_group_id'],
                 []
             );
+        }
+
+        /*
+ * MEET META (write to meets)
+ * - course from MEET tag
+ * - age_date from AGEDATE
+ * - contact_* from CONTACT
+ * - start/end derived from sessions if not set
+ */
+        $meetUpdates = [];
+
+        // course
+        if (empty($meet->course) && ! empty($meta['course'])) {
+            $meetUpdates['course'] = $this->normString($meta['course'], 20);
+        }
+
+        // age_date
+        if (empty($meet->age_date) && ! empty($meta['age_date'])) {
+            $meetUpdates['age_date'] = $meta['age_date'];
+        }
+
+        // contact fields
+        if (empty($meet->contact_name) && ! empty($meta['contact_name'])) {
+            $meetUpdates['contact_name'] = $this->normString($meta['contact_name']);
+        }
+        if (empty($meet->contact_email) && ! empty($meta['contact_email'])) {
+            $meetUpdates['contact_email'] = $this->normString($meta['contact_email']);
+        }
+        if (empty($meet->contact_phone) && ! empty($meta['contact_phone'])) {
+            $meetUpdates['contact_phone'] = $this->normString($meta['contact_phone'], 50);
+        }
+
+        // start_date / end_date (prefer meta, fallback to sessions table)
+        if (empty($meet->start_date) || empty($meet->end_date)) {
+            $start = $meta['start_date'] ?? null;
+            $end = $meta['end_date'] ?? null;
+
+            if (! $start || ! $end) {
+                $dates = DB::table('meet_sessions')
+                    ->where('meet_id', $meet->id)
+                    ->whereNotNull('date')
+                    ->pluck('date')
+                    ->filter()
+                    ->values();
+
+                if ($dates->isNotEmpty()) {
+                    $start = $start ?: $dates->min();
+                    $end = $end ?: $dates->max();
+                }
+            }
+
+            if (empty($meet->start_date) && $start) {
+                $meetUpdates['start_date'] = $start;
+            }
+            if (empty($meet->end_date) && $end) {
+                $meetUpdates['end_date'] = $end;
+            }
+
+            // If age_date still empty, use start_date as fallback
+            if (empty($meet->age_date) && ($meetUpdates['age_date'] ?? null) === null && $start) {
+                $meetUpdates['age_date'] = $start;
+            }
+        }
+
+        if (! empty($meetUpdates)) {
+            $meet->fill($meetUpdates);
+            $meet->save();
         }
     }
 
@@ -1540,5 +1611,147 @@ class LenexImportService
         }
 
         return $value;
+    }
+
+    private function applyMeetMetaFromXml(SimpleXMLElement $xml, Meet $meet): void
+    {
+        $meetNode = $xml->MEETS->MEET[0] ?? null;
+        if (! $meetNode) {
+            return;
+        }
+
+        $updates = [];
+
+        // 1) course (MEET attribute)
+        if (empty($meet->course)) {
+            $course = $this->firstAttr($meetNode, ['course', 'COURSE']);
+            if ($course !== null && trim($course) !== '') {
+                $updates['course'] = trim($course);
+            }
+        }
+
+        // 2) age_date (MEET/AGEDATE)
+        if (empty($meet->age_date)) {
+            $ageDateNode = $meetNode->AGEDATE[0] ?? null;
+
+            $rawAgeDate =
+                $this->firstAttr($ageDateNode, ['value', 'date', 'AGEDATE']) // falls als attr gespeichert
+                ?? LenexXml::text($ageDateNode);                              // falls als Text-Knoten
+
+            $ageDate = $this->parseLenexDate($rawAgeDate);
+            if ($ageDate) {
+                $updates['age_date'] = $ageDate;
+            }
+        }
+
+        // 3) contact fields (MEET/CONTACT)
+        $contactNode = $meetNode->CONTACT[0] ?? null;
+        if ($contactNode) {
+            if (empty($meet->contact_name)) {
+                $name =
+                    $this->firstAttr($contactNode, ['name', 'NAME'])
+                    ?? LenexXml::text($contactNode->NAME[0] ?? null);
+
+                if ($name) {
+                    $updates['contact_name'] = $name;
+                }
+            }
+
+            if (empty($meet->contact_email)) {
+                $email =
+                    $this->firstAttr($contactNode, ['email', 'EMAIL'])
+                    ?? LenexXml::text($contactNode->EMAIL[0] ?? null);
+
+                if ($email) {
+                    $updates['contact_email'] = $email;
+                }
+            }
+
+            if (empty($meet->contact_phone)) {
+                $phone =
+                    $this->firstAttr($contactNode, ['phone', 'PHONE', 'tel', 'TEL'])
+                    ?? LenexXml::text($contactNode->PHONE[0] ?? null)
+                    ?? LenexXml::text($contactNode->TEL[0] ?? null);
+
+                if ($phone) {
+                    $updates['contact_phone'] = $phone;
+                }
+            }
+        }
+
+        // 4) start_date / end_date: falls nicht gesetzt, aus meet_sessions.date min/max ableiten
+        if (empty($meet->start_date) || empty($meet->end_date)) {
+            $dates = DB::table('meet_sessions')
+                ->where('meet_id', $meet->id)
+                ->whereNotNull('date')
+                ->pluck('date')
+                ->filter()
+                ->values();
+
+            if ($dates->isNotEmpty()) {
+                if (empty($meet->start_date)) {
+                    $updates['start_date'] = $dates->min();
+                }
+                if (empty($meet->end_date)) {
+                    $updates['end_date'] = $dates->max();
+                }
+            }
+        }
+
+        if ($updates !== []) {
+            $meet->fill($updates);
+            $meet->save();
+        }
+    }
+
+    private function firstAttr(?SimpleXMLElement $node, array $names): ?string
+    {
+        if (! $node) {
+            return null;
+        }
+
+        foreach ($names as $name) {
+            $val = LenexXml::attr($node, $name);
+            if ($val !== null && trim($val) !== '') {
+                return $val;
+            }
+        }
+
+        return null;
+    }
+
+    private function parseLenexDate(?string $raw): ?string
+    {
+        $raw = $raw !== null ? trim($raw) : '';
+        if ($raw === '') {
+            return null;
+        }
+
+        try {
+            // LENEX liefert üblicherweise YYYY-MM-DD; Carbon kann auch ISO robust lesen
+            return Carbon::parse($raw)->toDateString();
+        } catch (Throwable) {
+            return null;
+        }
+    }
+
+    private function normLenexId(mixed $raw): ?int
+    {
+        if ($raw === null) {
+            return null;
+        }
+
+        $s = trim((string) $raw);
+        if ($s === '') {
+            return null;
+        }
+
+        if (! ctype_digit($s)) {
+            return null;
+        }
+
+        $v = (int) $s;
+
+        return $v > 0 ? $v : null;
     }
 }

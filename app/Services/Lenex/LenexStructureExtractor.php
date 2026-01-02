@@ -17,7 +17,7 @@ class LenexStructureExtractor
         /**
          * 1) Sessions + Events (namespace-safe)
          */
-        $sessionNodes = $xml->xpath('//*[local-name()="SESSION"]') ?: [];
+        $sessionNodes = $xml->xpath('//*[local-name()="MEET"]/*[local-name()="SESSIONS"]/*[local-name()="SESSION"]') ?: [];
 
         foreach ($sessionNodes as $session) {
             $sessionNo = $this->intAttrAnyNullable($session, ['number', 'no', 'sessionid', 'session_no']);
@@ -128,6 +128,7 @@ class LenexStructureExtractor
         });
 
         return [
+            'meet' => $this->extractMeetMeta($xml, $sessions),
             'age_groups' => $ageGroups,
             'sessions' => $sessions,
         ];
@@ -350,5 +351,86 @@ class LenexStructureExtractor
         }
 
         return implode(',', $out);
+    }
+
+    private function extractMeetMeta(SimpleXMLElement $xml, array $sessions): array
+    {
+        $meetNode = $xml->xpath('//*[local-name()="MEETS"]/*[local-name()="MEET"]')[0] ?? null;
+
+        $course = null;
+        $ageDate = null;
+        $contactName = null;
+        $contactEmail = null;
+        $contactPhone = null;
+
+        if ($meetNode) {
+            // MEET@course
+            $course = $this->strAttrAnyNullable($meetNode, ['course']);
+
+            // MEET/AGEDATE (Element; in der Praxis entweder Text oder @value)
+            $ageNode = $meetNode->xpath('./*[local-name()="AGEDATE"]')[0] ?? null;
+            if ($ageNode) {
+                $ageDate = $this->strAttrAnyNullable($ageNode, ['value', 'date']) ?? trim((string) $ageNode);
+                $ageDate = $ageDate !== '' ? $ageDate : null;
+            }
+
+            // MEET/CONTACT
+            $contactNode = $meetNode->xpath('./*[local-name()="CONTACT"]')[0] ?? null;
+            if ($contactNode) {
+                $contactName = $this->strAttrAnyNullable($contactNode,
+                    ['name']) ?? $this->strAttrAnyNullable($contactNode, ['NAME']);
+                $contactEmail = $this->strAttrAnyNullable($contactNode,
+                    ['email']) ?? $this->strAttrAnyNullable($contactNode, ['EMAIL']);
+                $contactPhone = $this->strAttrAnyNullable($contactNode,
+                    ['phone', 'tel']) ?? $this->strAttrAnyNullable($contactNode, ['PHONE', 'TEL']);
+            }
+        }
+
+        // start/end aus Sessions (SESSION@date)
+        $dates = [];
+        foreach ($sessions as $s) {
+            $d = $s['date'] ?? null;
+            if (is_string($d)) {
+                $d = trim($d);
+                if ($d !== '') {
+                    $dates[] = $d;
+                }
+            }
+        }
+
+        sort($dates);
+        $startDate = $dates[0] ?? null;
+        $endDate = ! empty($dates) ? $dates[count($dates) - 1] : null;
+
+        // Fallback: ageDate = startDate (wenn nicht gesetzt)
+        if ($ageDate === null) {
+            $ageDate = $startDate;
+        }
+
+        // Wenn MEET@course fehlt, aber Sessions evtl. course haben: optionaler Fallback
+        if ($course === null) {
+            $sessionCourses = [];
+            $sessionNodes = $xml->xpath('//*[local-name()="MEET"]/*[local-name()="SESSIONS"]/*[local-name()="SESSION"]') ?: [];
+            foreach ($sessionNodes as $sn) {
+                $c = $this->strAttrAnyNullable($sn, ['course']);
+                if ($c !== null) {
+                    $sessionCourses[] = $c;
+                }
+            }
+            $sessionCourses = array_values(array_unique($sessionCourses));
+            if (count($sessionCourses) === 1) {
+                $course = $sessionCourses[0];
+            }
+        }
+
+        return [
+            'course' => $course,
+            'age_date' => $ageDate,
+            'contact_name' => $contactName,
+            'contact_email' => $contactEmail,
+            'contact_phone' => $contactPhone,
+            'start_date' => $startDate,
+            'end_date' => $endDate,
+        ];
     }
 }

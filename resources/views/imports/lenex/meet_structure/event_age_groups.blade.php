@@ -11,6 +11,8 @@
     $total = $isPaginator ? (int) $ageGroups->total() : (is_countable($ageGroups) ? count($ageGroups) : 0);
 
     $items = $isPaginator ? $ageGroups : $ageGroups;
+
+    $isBatch = isset($batch) && $batch;
 @endphp
 
 @section('content')
@@ -27,7 +29,10 @@
                 </div>
             </div>
 
-            <a href="{{ route('imports.lenex.meet_structure.events.edit', [$batch, $event]) }}">
+            <a href="{{ $isBatch
+                ? route('imports.lenex.meet_structure.events.edit', [$batch, $event])
+                : route('meets.structure.events.edit', [$meet, $event]) }}"
+            >
                 <x-ui.button variant="secondary">Back</x-ui.button>
             </a>
         </div>
@@ -42,9 +47,11 @@
                         </div>
                     </div>
 
-                    <form method="GET"
-                          action="{{ route('imports.lenex.meet_structure.events.age_groups.edit', [$batch, $event]) }}"
-                          class="flex items-end gap-3">
+                    <form method="GET" action="{{ $isBatch
+                        ? route('imports.lenex.meet_structure.events.age_groups.edit', [$batch, $event])
+                        : route('meets.structure.events.age_groups.edit', [$meet, $event]) }}"
+                          class="flex items-end gap-3"
+                    >
                         <x-ui.field label="Search">
                             <x-ui.input name="q" value="{{ $q }}" placeholder="Name, code, classes…"/>
                         </x-ui.field>
@@ -64,9 +71,10 @@
             </x-ui.card-header>
 
             <x-ui.card-body>
-                <form method="POST"
-                      action="{{ route('imports.lenex.meet_structure.events.age_groups.update', [$batch, $event]) }}"
-                      class="space-y-4">
+                <form method="POST" action="{{ $isBatch
+                    ? route('imports.lenex.meet_structure.events.age_groups.update', [$batch, $event])
+                    : route('meets.structure.events.age_groups.update', [$meet, $event]) }}" class="space-y-4"
+                >
                     @csrf
                     @method('PUT')
 

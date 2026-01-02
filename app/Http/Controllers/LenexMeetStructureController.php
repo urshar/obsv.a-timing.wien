@@ -5,54 +5,29 @@ namespace App\Http\Controllers;
 use App\Models\ImportBatch;
 use App\Models\MeetAgeGroup;
 use App\Models\MeetEvent;
-use App\Models\MeetSession;
-use App\Support\ParaSwim;
 use Illuminate\Http\Request;
-use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 use Throwable;
 
-class LenexMeetStructureController extends Controller
+class LenexMeetStructureController extends AbstractMeetStructureController
 {
     public function show(ImportBatch $batch)
     {
         abort_unless($batch->status === 'committed', 404);
         abort_unless($batch->type === 'meet_structure', 404);
+        abort_unless($batch->meet_id, 404);
 
-        $meetId = $batch->meet_id;
-
-        $meet = $meetId ? DB::table('meets')->where('id', $meetId)->first() : null;
-
-        $ageGroups = $meetId
-            ? DB::table('meet_age_groups')->where('meet_id', $meetId)->orderBy('id')->get()
-            : collect();
-
-        $ageGroupsById = $ageGroups->keyBy('id');
-
-        $sessions = $meetId
-            ? DB::table('meet_sessions')->where('meet_id', $meetId)->orderBy('session_no')->orderBy('id')->get()
-            : collect();
-
-        $sessionIds = $sessions->pluck('id')->all();
-
-        $events = ! empty($sessionIds)
-            ? DB::table('meet_events')->whereIn('meet_session_id',
-                $sessionIds)->orderBy('event_no')->orderBy('id')->get()
-            : collect();
-
-        // Events nach Session gruppieren
-        $eventsBySession = $events->groupBy('meet_session_id');
+        $data = $this->buildShowData((int) $batch->meet_id);
 
         return view('imports.lenex.meet_structure.show', [
             'batch' => $batch,
-            'meet' => $meet,
-            'ageGroups' => $ageGroups,
-            'ageGroupsById' => $ageGroupsById,
-            'sessions' => $sessions,
-            'eventsBySession' => $eventsBySession,
+            'meet' => $data['meet'],
+            'ageGroups' => $data['ageGroups'],
+            'ageGroupsById' => $data['ageGroupsById'],
+            'sessions' => $data['sessions'],
+            'eventsBySession' => $data['eventsBySession'],
         ]);
-
     }
 
     public function edit(ImportBatch $batch)
@@ -91,85 +66,35 @@ class LenexMeetStructureController extends Controller
         abort_unless($batch->type === 'meet_structure', 404);
         abort_unless($batch->meet_id, 404);
 
-        $meetId = $batch->meet_id;
-
-        $meet = DB::table('meets')->where('id', $meetId)->first();
-
-        $sessions = MeetSession::query()
-            ->where('meet_id', $meetId)
-            ->orderBy('session_no')
-            ->get();
-
-        $sessionIds = $sessions->pluck('id')->all();
-
-        $eventsBySessionId = collect();
-        if (! empty($sessionIds)) {
-            $eventsBySessionId = MeetEvent::query()
-                ->whereIn('meet_session_id', $sessionIds)
-                ->orderBy('event_no')
-                ->get()
-                ->groupBy('meet_session_id');
-        }
-
-        $ageGroups = MeetAgeGroup::query()
-            ->where('meet_id', $meetId)
-            ->orderBy('name')
-            ->get();
+        $data = $this->buildTreeData((int) $batch->meet_id, null);
 
         return view('imports.lenex.meet_structure.tree', [
             'batch' => $batch,
-            'meet' => $meet,
-            'sessions' => $sessions,
-            'eventsBySessionId' => $eventsBySessionId,
-            'ageGroups' => $ageGroups,
-            'selectedEvent' => null,
+            'meet' => $data['meet'],
+            'sessions' => $data['sessions'],
+            'ageGroups' => $data['ageGroups'],
+            'selectedEvent' => $data['selectedEvent'],
         ]);
     }
 
     public function editEvent(ImportBatch $batch, MeetEvent $event)
     {
-        // Sicherheitschecks
         abort_unless($batch->status === 'committed', 404);
         abort_unless($batch->type === 'meet_structure', 404);
         abort_unless($batch->meet_id !== null, 404);
 
         $meetId = (int) $batch->meet_id;
 
-        // Event muss zum Meet gehören
-        $event->loadMissing('meetSession');
-        abort_unless(
-            $event->meetSession && (int) $event->meetSession->meet_id === $meetId,
-            404
-        );
+        $this->assertEventBelongsToMeet($event, $meetId);
 
-        // Meet (du verwendest hier DB::table; ok, aber konsistent casten)
-        $meet = DB::table('meets')->where('id', $meetId)->first();
-
-        $sessions = MeetSession::query()
-            ->where('meet_id', $meetId)
-            ->orderBy('session_no')
-            ->with([
-                'meetEvents' => function ($q) {
-                    $q->orderBy('event_no');
-                },
-            ])
-            ->get();
-
-        // AgeGroups fürs Meet (für andere Teile / ggf. später)
-        $ageGroups = MeetAgeGroup::query()
-            ->where('meet_id', $meetId)
-            ->orderBy('name')
-            ->get();
-
-        // Wichtig: was tree rechts tatsächlich braucht
-        $event->loadMissing(['meetAgeGroups', 'meetSession']);
+        $data = $this->buildTreeData($meetId, $event);
 
         return view('imports.lenex.meet_structure.tree', [
             'batch' => $batch,
-            'meet' => $meet,
-            'sessions' => $sessions,
-            'ageGroups' => $ageGroups,
-            'selectedEvent' => $event,
+            'meet' => $data['meet'],
+            'sessions' => $data['sessions'],
+            'ageGroups' => $data['ageGroups'],
+            'selectedEvent' => $data['selectedEvent'],
         ]);
     }
 
@@ -407,158 +332,25 @@ class LenexMeetStructureController extends Controller
 
     public function editEventAgeGroups(Request $request, ImportBatch $batch, MeetEvent $event)
     {
-        // Sicherheitschecks
         abort_unless($batch->status === 'committed', 404);
         abort_unless($batch->type === 'meet_structure', 404);
         abort_unless($batch->meet_id !== null, 404);
 
-        // Event muss zum Meet gehören
-        $event->loadMissing('meetSession');
-        abort_unless(
-            $event->meetSession && (int) $event->meetSession->meet_id === (int) $batch->meet_id,
-            404
-        );
-
-        // Query-Parameter
-        $q = trim((string) $request->query('q', ''));
-        $gender = strtoupper(trim((string) $request->query('gender', '')));
-        if (! in_array($gender, ['', 'F', 'M', 'X'], true)) {
-            $gender = '';
-        }
-
-        // Bereits zugewiesene AgeGroups (Checkboxen)
-        $event->loadMissing('meetAgeGroups');
-        $selectedIds = $event->meetAgeGroups->pluck('id')->all();
-
-        // Stroke Prefix (S / SB / SM)
-        $prefix = ParaSwim::strokePrefix($event->stroke);
-
-        /*
-         * 1) DB-Query (alles was gut in SQL geht)
-         */
-        $baseQuery = MeetAgeGroup::query()
-            ->where('meet_id', $batch->meet_id)
-            ->when($gender !== '', function ($query) use ($gender) {
-                $query->where('gender', $gender);
-            })
-            ->when($q !== '', function ($query) use ($q) {
-                $like = '%'.str_replace(['\\', '%', '_'], ['\\\\', '\%', '\_'], $q).'%';
-
-                $query->where(function ($qq) use ($like) {
-                    $qq->where('name', 'like', $like)
-                        ->orWhere('code', 'like', $like)
-                        ->orWhere('handicap', 'like', $like);
-                });
-            })
-            ->orderBy('name');
-
-        // Erst holen (Collection), weil danach Stroke/PI Filter in PHP
-        $ageGroups = $baseQuery->get();
-
-        /*
-         * 2) Stroke/PI Filter (PHP)
-         */
-        if (! $event->is_relay) {
-            $ageGroups = $ageGroups->filter(function ($ag) use ($prefix) {
-
-                // Klassen aus CSV parsen (z. B. "1,2,3,10")
-                $classes = ParaSwim::parseClasses($ag->handicap);
-
-                // Keine Klasseninfo → anzeigen
-                if (empty($classes)) {
-                    return true;
-                }
-
-                /*
-                 * PI pragmatisch erkennen:
-                 * PI = nur 1–10, keine 11/12/13/14/15/21
-                 */
-                $hasHigher = collect($classes)->contains(fn ($n) => $n >= 11);
-                $hasSpecial = collect($classes)->contains(fn ($n) => in_array($n, [14, 15, 21], true));
-
-                $isPI = ! $hasHigher && ! $hasSpecial;
-
-                // Nicht-PI → immer anzeigen
-                if (! $isPI) {
-                    return true;
-                }
-
-                $max = max($classes);
-
-                // BREAST → nur 1–9
-                if ($prefix === 'SB') {
-                    return $max <= 9;
-                }
-
-                // FREE / BACK / FLY / MEDLEY → 1–10
-                return $max <= 10;
-            })->values();
-        }
-
-        /*
-         * 3) Pagination nach Collection-Filter
-         */
-        $perPage = 60; // gern anpassen
-        $page = max(1, (int) $request->query('page', 1));
-        $total = $ageGroups->count();
-
-        $items = $ageGroups->slice(($page - 1) * $perPage, $perPage)->values();
-
-        $ageGroups = new LengthAwarePaginator(
-            $items,
-            $total,
-            $perPage,
-            $page,
-            [
-                'path' => $request->url(),
-                'query' => $request->query(),
-            ]
-        );
-
-        /*
-         * 4) View rendern
-         */
-        return view('imports.lenex.meet_structure.event_age_groups', [
-            'batch' => $batch,
-            'event' => $event,
-            'ageGroups' => $ageGroups,
-            'selectedIds' => $selectedIds,
-            'prefix' => $prefix,
-            'q' => $q,
-            'gender' => $gender,
-        ]);
-    }
-
-    public function updateEventAgeGroups(Request $request, ImportBatch $batch, MeetEvent $event)
-    {
-        abort_unless($batch->status === 'committed', 404);
-        abort_unless($batch->type === 'meet_structure', 404);
-        abort_unless($batch->meet_id, 404);
-
         $meetId = (int) $batch->meet_id;
 
-        $event->loadMissing('meetSession');
-        abort_unless($event->meetSession && (int) $event->meetSession->meet_id === $meetId, 404);
+        $this->assertEventBelongsToMeet($event, $meetId);
 
-        $data = $request->validate([
-            'age_group_ids' => ['array'],
-            'age_group_ids.*' => ['integer'],
+        $data = $this->buildAgeGroupsEditorData($request, $meetId, $event);
+
+        return view('imports.lenex.meet_structure.event_age_groups', [
+            'batch' => $batch,
+            'meet' => $this->loadMeet($meetId),
+            'event' => $event,
+            'q' => $data['q'],
+            'gender' => $data['gender'],
+            'prefix' => $data['prefix'],
+            'selectedIds' => $data['selectedIds'],
+            'ageGroups' => $data['ageGroups'],
         ]);
-
-        $ids = $data['age_group_ids'] ?? [];
-
-        // Nur IDs zulassen, die zu diesem Meet gehören
-        $allowedIds = MeetAgeGroup::query()
-            ->where('meet_id', $meetId)
-            ->whereIn('id', $ids)
-            ->pluck('id')
-            ->all();
-
-        $event->meetAgeGroups()->sync($allowedIds);
-
-        // Zurück ins Event-Detail im Tree (oder auf die Editor-Seite bleiben)
-        return redirect()
-            ->route('imports.lenex.meet_structure.events.edit', [$batch, $event])
-            ->with('status', 'Age groups updated.');
     }
 }

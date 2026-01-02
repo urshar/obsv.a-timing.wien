@@ -21,6 +21,8 @@
     $strokeBadge = function (?string $stroke): string {
         return ParaSwim::strokePrefix($stroke);
     };
+
+    $isBatch = isset($batch) && $batch;
 @endphp
 
 @section('content')
@@ -31,14 +33,24 @@
             <div>
                 <h1 class="text-2xl font-semibold text-slate-900">Meet Structure</h1>
                 <div class="text-sm text-slate-600">
-                    Batch #{{ $batch->id }} · {{ $meet->name ?? '—' }}
+                    @if($isBatch)
+                        Batch #{{ $batch->id }} · {{ $meet->name ?? '—' }}
+                    @else
+                        {{ $meet->name ?? '—' }}
+                    @endif
                 </div>
             </div>
 
             <div class="shrink-0">
-                <a href="{{ route('imports.lenex.preview', $batch) }}">
-                    <x-ui.button variant="secondary">Back to overview</x-ui.button>
-                </a>
+                @if($isBatch)
+                    <a href="{{ route('imports.lenex.preview', $batch) }}">
+                        <x-ui.button variant="secondary">Back</x-ui.button>
+                    </a>
+                @else
+                    <a href="{{ route('meets.index') }}">
+                        <x-ui.button variant="secondary">Back</x-ui.button>
+                    </a>
+                @endif
             </div>
         </div>
 
@@ -82,7 +94,9 @@
                                             $prefix = $strokeBadge($ev->stroke);
                                         @endphp
 
-                                        <a href="{{ route('imports.lenex.meet_structure.events.edit', [$batch, $ev]) }}"
+                                        <a href="{{ $isBatch
+                                            ? route('imports.lenex.meet_structure.events.edit', [$batch, $ev])
+                                            : route('meets.structure.events.edit', [$meet, $ev]) }}"
                                            class="block rounded-lg border px-3 py-2 hover:bg-slate-50 {{ $isActive ? 'border-slate-900 bg-slate-50' : 'border-slate-200' }}">
                                             <div class="flex items-start justify-between gap-3">
                                                 <div class="min-w-0">
@@ -172,7 +186,9 @@
 
                         {{-- Event edit form --}}
                         <form method="POST"
-                              action="{{ route('imports.lenex.meet_structure.events.update', [$batch, $selectedEvent]) }}"
+                              action="{{ $isBatch
+                                ? route('imports.lenex.meet_structure.events.update', [$batch, $selectedEvent])
+                                : route('meets.structure.events.update', [$meet, $selectedEvent]) }}"
                               class="space-y-4">
                             @csrf
                             @method('PUT')
@@ -233,7 +249,10 @@
                                     </div>
                                 </div>
 
-                                <a href="{{ route('imports.lenex.meet_structure.events.age_groups.edit', [$batch, $selectedEvent]) }}">
+                                <a href="{{ $isBatch
+                                    ? route('imports.lenex.meet_structure.events.age_groups.edit', [$batch, $selectedEvent])
+                                    : route('meets.structure.events.age_groups.edit', [$meet, $selectedEvent]) }}"
+                                >
                                     <x-ui.button variant="secondary">Edit age groups</x-ui.button>
                                 </a>
                             </div>

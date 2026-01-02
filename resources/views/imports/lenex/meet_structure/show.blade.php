@@ -8,6 +8,8 @@
 
     /** @var \Illuminate\Database\Eloquent\Collection|MeetSession[] $sessions */
     /** @var \Illuminate\Database\Eloquent\Collection|MeetAgeGroup[] $ageGroups */
+
+    $isBatch = isset($batch) && $batch;
 @endphp
 
 @section('content')
@@ -16,17 +18,33 @@
         <div class="flex items-start justify-between gap-4">
             <div>
                 <h1 class="text-2xl font-semibold text-slate-900">Meet Structure</h1>
-                <div class="text-sm text-slate-600">Batch #{{ $batch->id }}</div>
+                <div class="text-sm text-slate-600">
+                    @if($isBatch)
+                        Batch #{{ $batch->id }}
+                    @else
+                        Meet #{{ $meet->id }}
+                    @endif
+                </div>
             </div>
 
             <div class="flex gap-2">
-                <a href="{{ route('imports.lenex.meet_structure.tree', $batch) }}">
-                    <x-ui.button variant="primary">Edit structure</x-ui.button>
-                </a>
+                @if($isBatch)
+                    <a href="{{ route('imports.lenex.meet_structure.tree', $batch) }}">
+                        <x-ui.button variant="primary">Edit structure</x-ui.button>
+                    </a>
+                    <a href="{{ route('imports.lenex.history.show', $batch) }}">
+                        <x-ui.button variant="secondary">History</x-ui.button>
+                    </a>
+                @else
+                    <a href="{{ route('meets.structure.tree', $meet) }}">
+                        <x-ui.button variant="primary">Edit structure</x-ui.button>
+                    </a>
 
-                <a href="{{ route('imports.lenex.history.show', $batch) }}">
-                    <x-ui.button variant="secondary">History</x-ui.button>
-                </a>
+                    <a href="{{ route('meets.index') }}">
+                        <x-ui.button variant="secondary">Meetings</x-ui.button>
+                    </a>
+                @endif
+
             </div>
         </div>
 

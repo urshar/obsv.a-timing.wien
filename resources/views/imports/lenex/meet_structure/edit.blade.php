@@ -15,6 +15,7 @@
     $oldMeetCity = old('meet.city', data_get($meet, 'city'));
     $oldMeetFrom = old('meet.from', data_get($meet, 'from'));
     $oldMeetTo   = old('meet.to', data_get($meet, 'to'));
+    $isBatch = isset($batch) && $batch;
 @endphp
 
 @section('content')
@@ -28,10 +29,19 @@
             </div>
 
             <div class="shrink-0">
-                <a href="{{ route('imports.lenex.preview', $batch) }}"
-                   class="inline-flex items-center rounded-lg px-4 py-2 text-sm font-semibold bg-white text-slate-900 ring-1 ring-inset ring-slate-300 hover:bg-slate-50">
-                    Back to overview
-                </a>
+                @if($isBatch)
+                    <a href="{{ route('imports.lenex.preview', $batch) }}">
+                        <x-ui.button variant="secondary">
+                            Back to overview
+                        </x-ui.button>
+                    </a>
+                @else
+                    <a href="{{ route('meets.structure.show', $meet) }}">
+                        <x-ui.button variant="secondary">
+                            Back to overview
+                        </x-ui.button>
+                    </a>
+                @endif
             </div>
         </div>
 

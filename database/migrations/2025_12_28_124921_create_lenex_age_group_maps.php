@@ -16,12 +16,15 @@ return new class extends Migration
             $table->collation('utf8mb4_unicode_ci');
 
             $table->id();
-            $table->unsignedBigInteger('meet_id');
-            $table->string('lenex_code');
-            $table->unsignedBigInteger('meet_age_group_id');
+            $table->foreignId('meet_id')->constrained('meets')->cascadeOnDelete();
+            $table->foreignId('meet_age_group_id')->constrained('meet_age_groups')->cascadeOnDelete();
+
+            $table->unsignedInteger('lenex_code');
+
+            $table->timestamps();
 
             $table->unique(['meet_id', 'lenex_code']);
-            $table->foreign('meet_age_group_id')->references('id')->on('meet_age_groups')->onDelete('cascade');
+            $table->index(['meet_id', 'meet_age_group_id']);
         });
     }
 

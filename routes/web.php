@@ -3,6 +3,8 @@
 use App\Http\Controllers\ContinentController;
 use App\Http\Controllers\LenexImportController;
 use App\Http\Controllers\LenexMeetStructureController;
+use App\Http\Controllers\MeetController;
+use App\Http\Controllers\MeetStructureController;
 use App\Http\Controllers\NationController;
 use App\Http\Controllers\NationImportController;
 use App\Http\Controllers\ParaSwimStyleAdminController;
@@ -29,6 +31,22 @@ Route::resource('nations', NationController::class)->except(['show']);
 Route::resource('regions', RegionController::class)->except(['show']);
 
 Route::resource('para-swim-styles', ParaSwimStyleAdminController::class)->except(['show']);
+
+Route::resource('meets', MeetController::class);
+
+Route::prefix('meets/{meet}/structure')->name('meets.structure.')->group(function () {
+    Route::get('/', [MeetStructureController::class, 'show'])->name('show');
+
+    Route::get('/tree', [MeetStructureController::class, 'tree'])->name('tree');
+
+    Route::get('/events/{event}/edit', [MeetStructureController::class, 'editEvent'])->name('events.edit');
+    Route::put('/events/{event}', [MeetStructureController::class, 'updateEvent'])->name('events.update');
+
+    Route::get('/events/{event}/age-groups', [MeetStructureController::class, 'editEventAgeGroups'])
+        ->name('events.age_groups.edit');
+    Route::put('/events/{event}/age-groups', [MeetStructureController::class, 'updateEventAgeGroups'])
+        ->name('events.age_groups.update');
+});
 
 Route::prefix('imports/lenex')->name('imports.lenex.')->group(function () {
     Route::get('/', [LenexImportController::class, 'create'])->name('create');

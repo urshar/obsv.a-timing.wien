@@ -15,20 +15,14 @@ return new class extends Migration
             $table->charset('utf8mb4');
             $table->collation('utf8mb4_unicode_ci');
 
-            $table->unsignedBigInteger('meet_event_id');
-            $table->unsignedBigInteger('age_group_id');
+            $table->id();
 
-            $table->primary(['meet_event_id', 'age_group_id']);
+            $table->foreignId('meet_event_id')->constrained('meet_events')->cascadeOnDelete();
+            $table->foreignId('age_group_id')->constrained('meet_age_groups')->cascadeOnDelete();
 
-            $table->foreign('meet_event_id')
-                ->references('id')->on('meet_events')
-                ->onDelete('cascade');
+            $table->unique(['meet_event_id', 'age_group_id']);
 
-            $table->foreign('age_group_id')
-                ->references('id')->on('meet_age_groups')
-                ->onDelete('cascade');
-
-            $table->index('age_group_id');
+            $table->timestamps();
         });
     }
 
