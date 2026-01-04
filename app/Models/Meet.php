@@ -44,4 +44,9 @@ class Meet extends Model
             'id'            // local key on meet_sessions
         );
     }
+
+    public function importBatches(): HasMany
+    {
+        return $this->hasMany(ImportBatch::class, 'meet_id');
+    }
 }

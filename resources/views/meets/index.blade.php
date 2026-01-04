@@ -65,6 +65,12 @@
             </x-slot:head>
 
             @forelse($meets as $meet)
+                @php
+                    $hasStructure = (($meet->sessions_count ?? 0) > 0)
+                        || (($meet->events_count ?? 0) > 0)
+                        || (($meet->age_groups_count ?? 0) > 0);
+                @endphp
+
                 <tr class="hover:bg-slate-50">
                     <x-ui.td>
                         <div class="font-medium text-slate-900">
@@ -79,13 +85,35 @@
                     </x-ui.td>
 
                     <x-ui.td>
-                        <div class="text-slate-900">
-                            {{ optional($meet->start_date)->format('d.m.Y') ?? '—' }}
-                            @if($meet->end_date)
-                                – {{ $meet->end_date->format('d.m.Y') }}
-                            @endif
-                        </div>
+                        @php
+                            $start = $meet->start_date;
+                            $end = $meet->end_date;
 
+                            $dateLabel = '—';
+
+                            if ($start && $end) {
+                                // Defensive: begin must not be after end
+                                if ($start->lte($end)) {
+                                    if ($start->isSameDay($end)) {
+                                        $dateLabel = $start->format('d.m.Y');
+                                    } else {
+                                        $dateLabel = $start->format('d.m.') . ' - ' . $end->format('d.m.Y');
+                                    }
+                                } else {
+                                    // Should not happen; show start only to surface the issue
+                                    $dateLabel = $start->format('d.m.Y');
+                                }
+                            } elseif ($start) {
+                                $dateLabel = $start->format('d.m.Y');
+                            } elseif ($end) {
+                                $dateLabel = $end->format('d.m.Y');
+                            }
+                        @endphp
+
+                        <div class="text-sm text-slate-600">
+                            {{ $dateLabel }}
+                        </div>
+                        
                         @if($meet->age_date)
                             <div class="text-xs text-slate-500">
                                 Age Date: {{ $meet->age_date->format('d.m.Y') }}
@@ -114,9 +142,9 @@
 
                     <x-ui.td>
                         <div class="flex flex-wrap items-center gap-2">
-                            <x-ui.badge>Sessions: {{ $meet->sessions_count }}</x-ui.badge>
-                            <x-ui.badge>Events: {{ $meet->events_count }}</x-ui.badge>
-                            <x-ui.badge>AgeGroups: {{ $meet->age_groups_count }}</x-ui.badge>
+                            <x-ui.badge>Sessions: {{ $meet->sessions_count ?? 0 }}</x-ui.badge>
+                            <x-ui.badge>Events: {{ $meet->events_count ?? 0 }}</x-ui.badge>
+                            <x-ui.badge>AgeGroups: {{ $meet->age_groups_count ?? 0 }}</x-ui.badge>
                         </div>
                     </x-ui.td>
 
@@ -126,9 +154,16 @@
                                 <x-ui.button variant="secondary">Edit</x-ui.button>
                             </a>
 
-                            <a href="{{ route('meets.structure.show', $meet) }}">
-                                <x-ui.button variant="ghost">Structure</x-ui.button>
-                            </a>
+                            @if($hasStructure)
+                                <a href="{{ route('meets.structure.show', $meet) }}">
+                                    <x-ui.button variant="ghost">Structure</x-ui.button>
+                                </a>
+                            @else
+                                <x-ui.button variant="ghost" disabled
+                                             title="No structure available yet. Import LENEX meet structure or add sessions/events.">
+                                    Structure
+                                </x-ui.button>
+                            @endif
 
                             @php
                                 $rowCanDelete = (($meet->sessions_count ?? 0) === 0 && ($meet->events_count ?? 0) === 0 && ($meet->age_groups_count ?? 0) === 0);

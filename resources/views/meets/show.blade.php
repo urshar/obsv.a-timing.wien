@@ -26,6 +26,47 @@
             <a href="{{ route('meets.structure.show', $meet) }}">
                 <x-ui.button variant="ghost">Structure</x-ui.button>
             </a>
+
+            <x-ui.dropdown-alpine label="Quick actions" variant="secondary" align="right" width="w-80">
+
+                <x-ui.dropdown-item :href="route('meets.structure.tree', $meet)">
+                    Open structure editor
+                </x-ui.dropdown-item>
+
+                <x-ui.dropdown-item :href="route('imports.lenex.create')">
+                    New LENEX import
+                </x-ui.dropdown-item>
+
+                <div class="my-1 border-t border-slate-200"></div>
+
+                <x-ui.dropdown-item
+                    :href="!empty($latestBatch) ? route('imports.lenex.history.show', $latestBatch) : null"
+                    :disabled="empty($latestBatch)">
+                    Latest batch: History
+                </x-ui.dropdown-item>
+
+                <x-ui.dropdown-item :href="!empty($latestBatch) ? route('imports.lenex.preview', $latestBatch) : null"
+                                    :disabled="empty($latestBatch)">
+                    Latest batch: Preview
+                </x-ui.dropdown-item>
+
+                @php
+                    $latestStructureOnly = false;
+                    if (!empty($latestStructureBatch)) {
+                        $s = is_array($latestStructureBatch->summary_json)
+                            ? $latestStructureBatch->summary_json
+                            : [];
+                        $latestStructureOnly = (bool) ($s['structure_only'] ?? false);
+                    }
+                    $canOpenStructureBatch = !empty($latestStructureBatch) && $latestStructureOnly;
+                @endphp
+
+                <x-ui.dropdown-item
+                    :href="$canOpenStructureBatch ? route('imports.lenex.meet_structure.tree', $latestStructureBatch) : null"
+                    :disabled="!$canOpenStructureBatch">
+                    Latest structure batch: Tree
+                </x-ui.dropdown-item>
+            </x-ui.dropdown-alpine>
         </div>
 
         @php
@@ -139,6 +180,49 @@
     <x-ui.card class="mt-6">
         <x-ui.card-header title="Imports" subtitle="LENEX batches linked to this meeting"/>
         <x-ui.card-body>
+            <form method="GET" action="{{ route('meets.show', $meet) }}"
+                  class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+
+                <div class="flex flex-col gap-3 sm:flex-row sm:items-end">
+                    <x-ui.field label="Search" name="q" compact>
+                        <x-ui.input name="q" :value="$q ?? ''" placeholder="Filename, type, status..." class="w-64"/>
+                    </x-ui.field>
+
+                    <x-ui.field label="Type" name="type" compact>
+                        <x-ui.select name="type" class="w-56">
+                            <option value="">All types</option>
+                            @foreach($typeOptions ?? [] as $opt)
+                                <option value="{{ $opt }}" @selected(($type ?? '') === $opt)>{{ $opt }}</option>
+                            @endforeach
+                        </x-ui.select>
+                    </x-ui.field>
+
+                    <x-ui.field label="Status" name="status" compact>
+                        <x-ui.select name="status" class="w-56">
+                            <option value="">All statuses</option>
+                            @foreach($statusOptions ?? [] as $opt)
+                                <option value="{{ $opt }}" @selected(($status ?? '') === $opt)>{{ $opt }}</option>
+                            @endforeach
+                        </x-ui.select>
+                    </x-ui.field>
+
+                    <div class="flex gap-2">
+                        <x-ui.button type="submit" variant="secondary">Filter</x-ui.button>
+
+                        @if(!empty($q) || !empty($type) || !empty($status))
+                            <a href="{{ route('meets.show', $meet) }}">
+                                <x-ui.button type="button" variant="ghost">Reset</x-ui.button>
+                            </a>
+                        @endif
+                    </div>
+                </div>
+
+                <div class="flex gap-2">
+                    <a href="{{ route('imports.lenex.create') }}">
+                        <x-ui.button variant="secondary">New LENEX import</x-ui.button>
+                    </a>
+                </div>
+            </form>
             @if($batches->isEmpty())
                 <div class="text-sm text-slate-600">No import batches linked to this meeting.</div>
             @else
@@ -150,10 +234,19 @@
                                 ID
                             </th>
                             <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">
+                                Created
+                            </th>
+                            <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">
                                 Type
                             </th>
                             <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">
                                 Status
+                            </th>
+                            <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">
+                                Issues
+                            </th>
+                            <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">
+                                Relays
                             </th>
                             <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">
                                 Filename
@@ -165,23 +258,51 @@
                         </thead>
                         <tbody class="divide-y divide-slate-200">
                         @foreach($batches as $b)
+                            @php
+                                $summary = is_array($b->summary_json) ? $b->summary_json : [];
+                                $structureOnly = (bool) ($summary['structure_only'] ?? false);
+                                $isStructure = ($b->type === 'meet_structure');
+                            @endphp
+
                             <tr class="hover:bg-slate-50">
                                 <td class="px-4 py-3 text-sm">{{ $b->id }}</td>
+                                <td class="px-4 py-3 text-sm">{{ optional($b->created_at)->format('d.m.Y H:i') ?? '—' }}</td>
                                 <td class="px-4 py-3 text-sm">{{ $b->type ?? '—' }}</td>
                                 <td class="px-4 py-3 text-sm">
                                     <x-ui.badge>{{ $b->status ?? '—' }}</x-ui.badge>
                                 </td>
+                                <td class="px-4 py-3 text-sm">
+                                    <span class="text-slate-900">E: {{ $b->error_count ?? 0 }}</span>
+                                    <span class="text-slate-500"> / W: {{ $b->warning_count ?? 0 }}</span>
+                                </td>
+                                <td class="px-4 py-3 text-sm">{{ $b->relay_count ?? 0 }}</td>
                                 <td class="px-4 py-3 text-sm">{{ $b->filename ?? '—' }}</td>
                                 <td class="px-4 py-3 text-sm text-right">
-                                    <a href="{{ route('imports.lenex.history.show', $b) }}">
-                                        <x-ui.button variant="secondary">Open</x-ui.button>
-                                    </a>
+                                    <div class="inline-flex gap-2">
+                                        <a href="{{ route('imports.lenex.history.show', $b) }}">
+                                            <x-ui.button variant="secondary">History</x-ui.button>
+                                        </a>
+
+                                        @if($isStructure && $structureOnly)
+                                            <a href="{{ route('imports.lenex.meet_structure.tree', $b) }}">
+                                                <x-ui.button variant="ghost">Batch structure</x-ui.button>
+                                            </a>
+                                        @endif
+
+                                        <a href="{{ route('imports.lenex.preview', $b) }}">
+                                            <x-ui.button variant="ghost">Preview</x-ui.button>
+                                        </a>
+                                    </div>
                                 </td>
                             </tr>
                         @endforeach
                         </tbody>
                     </table>
                 </div>
+
+                <x-ui.card-footer class="flex justify-end">
+                    {{ $batches->links() }}
+                </x-ui.card-footer>
             @endif
         </x-ui.card-body>
     </x-ui.card>

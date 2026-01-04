@@ -2,7 +2,8 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\ImportBatch;
+use App\Http\Requests\MeetStoreRequest;
+use App\Http\Requests\MeetUpdateRequest;
 use App\Models\Meet;
 use App\Support\MeetDeletionGuard;
 use Illuminate\Http\Request;
@@ -33,19 +34,9 @@ class MeetController extends Controller
         ]);
     }
 
-    public function store(Request $request)
+    public function store(MeetStoreRequest $request)
     {
-        $data = $request->validate([
-            'name' => ['required', 'string', 'max:255'],
-            'start_date' => ['nullable', 'date'],
-            'end_date' => ['nullable', 'date', 'after_or_equal:start_date'],
-            'age_date' => ['nullable', 'date'],
-            'course' => ['nullable', 'string', 'max:20'],
-
-            'contact_name' => ['nullable', 'string', 'max:255'],
-            'contact_email' => ['nullable', 'email', 'max:255'],
-            'contact_phone' => ['nullable', 'string', 'max:50'],
-        ]);
+        $data = $request->validated();
 
         // manuell erstellte Meets haben keine LENEX Source
         $data['source_filename'] = null;
@@ -70,21 +61,9 @@ class MeetController extends Controller
         ]);
     }
 
-    public function update(Request $request, Meet $meet)
+    public function update(MeetUpdateRequest $request, Meet $meet)
     {
-        $data = $request->validate([
-            'name' => ['required', 'string', 'max:255'],
-            'start_date' => ['nullable', 'date'],
-            'end_date' => ['nullable', 'date', 'after_or_equal:start_date'],
-            'age_date' => ['nullable', 'date'],
-            'course' => ['nullable', 'string', 'max:20'],
-
-            'contact_name' => ['nullable', 'string', 'max:255'],
-            'contact_email' => ['nullable', 'email', 'max:255'],
-            'contact_phone' => ['nullable', 'string', 'max:50'],
-        ]);
-
-        $meet->update($data);
+        $meet->update($request->validated());
 
         return redirect()
             ->route('meets.edit', $meet)
@@ -113,21 +92,57 @@ class MeetController extends Controller
             ->with('status', 'Meeting deleted.');
     }
 
-    public function show(Meet $meet)
+    public function show(Request $request, Meet $meet)
     {
         $meet->loadCount(['sessions', 'events', 'ageGroups']);
 
-        $batches = class_exists(ImportBatch::class)
-            ? ImportBatch::query()
-                ->where('meet_id', $meet->id)
-                ->orderByDesc('id')
-                ->limit(20)
-                ->get()
-            : collect();
+        $q = trim((string) $request->query('q', ''));
+        $type = $request->query('type');
+        $status = $request->query('status');
+
+        $batchesQuery = $meet->importBatches()
+            ->when($q !== '', function ($query) use ($q) {
+                $query->where(function ($qq) use ($q) {
+                    $qq->where('filename', 'like', "%{$q}%")
+                        ->orWhere('type', 'like', "%{$q}%")
+                        ->orWhere('status', 'like', "%{$q}%");
+                });
+            })
+            ->when(! empty($type), fn ($query) => $query->where('type', $type))
+            ->when(! empty($status), fn ($query) => $query->where('status', $status))
+            ->withCount([
+                'issues as error_count' => fn ($q) => $q->where('severity', 'error'),
+                'issues as warning_count' => fn ($q) => $q->where('severity', 'warning'),
+            ])
+            ->orderByDesc('id');
+
+        $batches = $batchesQuery->paginate(15)->withQueryString();
+
+        $latestBatch = $meet->importBatches()
+            ->orderByDesc('id')
+            ->first();
+
+        $latestStructureBatch = $meet->importBatches()
+            ->where('status', 'committed')
+            ->where('type', 'meet_structure')
+            ->orderByDesc('id')
+            ->first();
+
+        $typeOptions = $meet->importBatches()->select('type')->distinct()->orderBy('type')->pluck('type')->filter()->values();
+        $statusOptions = $meet->importBatches()->select('status')->distinct()->orderBy('status')->pluck('status')->filter()->values();
 
         return view('meets.show', [
             'meet' => $meet,
             'batches' => $batches,
+
+            'latestBatch' => $latestBatch,
+            'latestStructureBatch' => $latestStructureBatch,
+
+            'q' => $q,
+            'type' => $type,
+            'status' => $status,
+            'typeOptions' => $typeOptions,
+            'statusOptions' => $statusOptions,
         ]);
     }
 }
