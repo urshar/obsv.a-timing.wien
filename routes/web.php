@@ -36,16 +36,28 @@ Route::resource('meets', MeetController::class);
 
 Route::prefix('meets/{meet}/structure')->name('meets.structure.')->group(function () {
     Route::get('/', [MeetStructureController::class, 'show'])->name('show');
-
     Route::get('/tree', [MeetStructureController::class, 'tree'])->name('tree');
 
     Route::get('/events/{event}/edit', [MeetStructureController::class, 'editEvent'])->name('events.edit');
     Route::put('/events/{event}', [MeetStructureController::class, 'updateEvent'])->name('events.update');
+    Route::get('/sessions/{session}/events/create', [MeetStructureController::class, 'createEvent'])
+        ->name('events.create');
+    Route::post('/sessions/{session}/events', [MeetStructureController::class, 'storeEvent'])
+        ->name('events.store');
+    Route::delete('/events/{event}', [MeetStructureController::class, 'destroyEvent'])
+        ->name('events.destroy');
 
     Route::get('/events/{event}/age-groups', [MeetStructureController::class, 'editEventAgeGroups'])
         ->name('events.age_groups.edit');
     Route::put('/events/{event}/age-groups', [MeetStructureController::class, 'updateEventAgeGroups'])
         ->name('events.age_groups.update');
+
+    // Sessions CRUD
+    Route::get('/sessions/create', [MeetStructureController::class, 'createSession'])->name('sessions.create');
+    Route::post('/sessions', [MeetStructureController::class, 'storeSession'])->name('sessions.store');
+    Route::get('/sessions/{session}/edit', [MeetStructureController::class, 'editSession'])->name('sessions.edit');
+    Route::put('/sessions/{session}', [MeetStructureController::class, 'updateSession'])->name('sessions.update');
+    Route::delete('/sessions/{session}', [MeetStructureController::class, 'destroySession'])->name('sessions.destroy');
 });
 
 Route::prefix('imports/lenex')->name('imports.lenex.')->group(function () {
@@ -69,11 +81,9 @@ Route::prefix('imports/lenex')->name('imports.lenex.')->group(function () {
     Route::put('/batch/{batch}/meet-structure/events/{event}', [LenexMeetStructureController::class, 'updateEvent'])
         ->name('meet_structure.events.update');
     Route::get('/batch/{batch}/meet-structure/events/{event}/age-groups',
-        [LenexMeetStructureController::class, 'editEventAgeGroups'])
-        ->name('meet_structure.events.age_groups.edit');
-    Route::put('/batch/{batch}/meet-structure/events/{event}/age-groups',
-        [LenexMeetStructureController::class, 'updateEventAgeGroups'])
-        ->name('meet_structure.events.age_groups.update');
+        [LenexMeetStructureController::class, 'editEventAgeGroups'])->name('meet_structure.events.age_groups.edit');
+    //    Route::put('/batch/{batch}/meet-structure/events/{event}/age-groups',
+    //        [LenexMeetStructureController::class, 'updateEventAgeGroups'])->name('meet_structure.events.age_groups.update');
 
     Route::get('/history', [LenexImportController::class, 'history'])->name('history');
     Route::get('/history/{batch}', [LenexImportController::class, 'historyShow'])->name('history.show');

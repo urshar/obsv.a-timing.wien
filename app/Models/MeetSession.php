@@ -19,6 +19,10 @@ class MeetSession extends Model
         'start_time',
     ];
 
+    protected $casts = [
+        'date' => 'date',
+    ];
+
     public function meetEvents(): HasMany
     {
         return $this->hasMany(MeetEvent::class, 'meet_session_id');

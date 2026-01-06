@@ -85,33 +85,8 @@
                     </x-ui.td>
 
                     <x-ui.td>
-                        @php
-                            $start = $meet->start_date;
-                            $end = $meet->end_date;
-
-                            $dateLabel = '—';
-
-                            if ($start && $end) {
-                                // Defensive: begin must not be after end
-                                if ($start->lte($end)) {
-                                    if ($start->isSameDay($end)) {
-                                        $dateLabel = $start->format('d.m.Y');
-                                    } else {
-                                        $dateLabel = $start->format('d.m.') . ' - ' . $end->format('d.m.Y');
-                                    }
-                                } else {
-                                    // Should not happen; show start only to surface the issue
-                                    $dateLabel = $start->format('d.m.Y');
-                                }
-                            } elseif ($start) {
-                                $dateLabel = $start->format('d.m.Y');
-                            } elseif ($end) {
-                                $dateLabel = $end->format('d.m.Y');
-                            }
-                        @endphp
-
                         <div class="text-sm text-slate-600">
-                            {{ $dateLabel }}
+                            <x-ui.date-range :start="$meet->start_date" :end="$meet->end_date"/>
                         </div>
                         
                         @if($meet->age_date)

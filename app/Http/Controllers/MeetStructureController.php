@@ -2,9 +2,12 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Requests\MeetEventRequest;
+use App\Http\Requests\MeetSessionRequest;
 use App\Models\ImportBatch;
 use App\Models\Meet;
 use App\Models\MeetEvent;
+use App\Models\MeetSession;
 use Illuminate\Http\Request;
 
 class MeetStructureController extends AbstractMeetStructureController
@@ -13,13 +16,7 @@ class MeetStructureController extends AbstractMeetStructureController
     {
         $data = $this->buildShowData((int) $meet->id);
 
-        return view('imports.lenex.meet_structure.show', [
-            'meet' => $data['meet'],
-            'ageGroups' => $data['ageGroups'],
-            'ageGroupsById' => $data['ageGroupsById'],
-            'sessions' => $data['sessions'],
-            'eventsBySession' => $data['eventsBySession'],
-        ]);
+        return view('meets.structure.show', $data);
     }
 
     public function tree(Meet $meet)
@@ -118,5 +115,141 @@ class MeetStructureController extends AbstractMeetStructureController
         return redirect()
             ->route('imports.lenex.meet_structure.events.edit', [$batch, $event])
             ->with('status', 'Age groups updated.');
+    }
+
+    public function createSession(Meet $meet)
+    {
+        return view('meets.structure.sessions.create', [
+            'meet' => $meet,
+        ]);
+    }
+
+    public function storeSession(MeetSessionRequest $request, Meet $meet)
+    {
+        $data = $request->validated();
+
+        $exists = MeetSession::query()
+            ->where('meet_id', $meet->id)
+            ->where('session_no', $data['session_no'])
+            ->exists();
+
+        if ($exists) {
+            return back()
+                ->withErrors(['session_no' => 'This session number is already used in this meeting.'])
+                ->withInput();
+        }
+
+        $meet->sessions()->create($data);
+
+        return redirect()
+            ->route('meets.structure.show', $meet)
+            ->with('status', 'Session created.');
+    }
+
+    public function editSession(Meet $meet, MeetSession $session)
+    {
+        abort_unless($session->meet_id === $meet->id, 404);
+
+        return view('meets.structure.sessions.edit', [
+            'meet' => $meet,
+            'session' => $session,
+        ]);
+    }
+
+    public function updateSession(MeetSessionRequest $request, Meet $meet, MeetSession $session)
+    {
+        abort_unless($session->meet_id === $meet->id, 404);
+
+        $data = $request->validated();
+
+        $exists = MeetSession::query()
+            ->where('meet_id', $meet->id)
+            ->where('session_no', $data['session_no'])
+            ->where('id', '!=', $session->id)
+            ->exists();
+
+        if ($exists) {
+            return back()
+                ->withErrors(['session_no' => 'This session number is already used in this meeting.'])
+                ->withInput();
+        }
+
+        $session->update($data);
+
+        return redirect()
+            ->route('meets.structure.show', $meet)
+            ->with('status', 'Session updated.');
+    }
+
+    public function destroySession(Meet $meet, MeetSession $session)
+    {
+        abort_unless($session->meet_id === $meet->id, 404);
+
+        // optional: später guard wenn results/entries existieren
+        $session->delete();
+
+        return redirect()
+            ->route('meets.structure.show', $meet)
+            ->with('status', 'Session deleted.');
+    }
+
+    public function createEvent(Meet $meet, MeetSession $session)
+    {
+        abort_unless($session->meet_id === $meet->id, 404);
+
+        return view('meets.structure.events.create', [
+            'meet' => $meet,
+            'session' => $session,
+        ]);
+    }
+
+    public function storeEvent(MeetEventRequest $request, Meet $meet, MeetSession $session)
+    {
+        abort_unless($session->meet_id === $meet->id, 404);
+
+        $data = $request->validated();
+
+        $exists = MeetEvent::query()
+            ->where('meet_session_id', $session->id)
+            ->where('event_no', $data['event_no'])
+            ->exists();
+
+        if ($exists) {
+            return back()
+                ->withErrors(['event_no' => 'This event number is already used in this session.'])
+                ->withInput();
+        }
+
+        MeetEvent::query()->create([
+            'meet_session_id' => $session->id,
+            'event_no' => $data['event_no'],
+            'name' => $data['name'],
+
+            'gender' => $data['gender'] ?? null,
+            'distance' => $data['distance'] ?? null,
+            'stroke' => $data['stroke'] ?? null,
+            'round' => $data['round'] ?? null,
+            'is_relay' => (int) ($data['is_relay'] ?? false),
+
+            // legacy field optional: leave null for manual
+            'meet_age_group_id' => null,
+        ]);
+
+        return redirect()
+            ->route('meets.structure.show', $meet)
+            ->with('status', 'Event created.');
+    }
+
+    public function destroyEvent(Meet $meet, MeetEvent $event)
+    {
+        // Ownership check via session->meet_id
+        $session = $event->session; // relation needed, see note below
+        abort_unless($session && $session->meet_id === $meet->id, 404);
+
+        $event->delete();
+
+        return redirect()
+            ->route('meets.structure.show', $meet)
+            ->with('status', 'Event deleted.');
     }
 }
