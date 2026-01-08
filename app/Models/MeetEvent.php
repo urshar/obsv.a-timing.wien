@@ -21,6 +21,7 @@ class MeetEvent extends Model
         'stroke',
         'round',
         'is_relay',
+        'meet_age_group_id',
     ];
 
     public function meetSession(): BelongsTo
@@ -30,6 +31,7 @@ class MeetEvent extends Model
 
     public function meetAgeGroups(): BelongsToMany
     {
-        return $this->belongsToMany(MeetAgeGroup::class, 'age_group_event', 'meet_event_id', 'age_group_id');
+        return $this->belongsToMany(MeetAgeGroup::class, 'age_group_event', 'meet_event_id',
+            'age_group_id')->withTimestamps();
     }
 }

@@ -3,7 +3,6 @@
 @php
     use App\Support\ParaSwim;
 
-    // robust, falls Controller nix setzt
     $q = $q ?? request('q', '');
     $gender = $gender ?? request('gender', '');
 
@@ -11,9 +10,9 @@
     $total = $isPaginator ? (int) $ageGroups->total() : (is_countable($ageGroups) ? count($ageGroups) : 0);
 
     $items = $ageGroups;
-
-    $isBatch = isset($batch) && $batch;
 @endphp
+
+@section('title', 'Edit age groups')
 
 @section('content')
     <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
@@ -29,10 +28,7 @@
                 </div>
             </div>
 
-            <a href="{{ $isBatch
-                ? route('imports.lenex.meet_structure.events.edit', [$batch, $event])
-                : route('meets.structure.events.edit', [$meet, $event]) }}"
-            >
+            <a href="{{ route('meets.structure.events.edit', [$meet, $event]) }}">
                 <x-ui.button variant="secondary">Back</x-ui.button>
             </a>
         </div>
@@ -47,9 +43,8 @@
                         </div>
                     </div>
 
-                    <form method="GET" action="{{ $isBatch
-                        ? route('imports.lenex.meet_structure.events.age_groups.edit', [$batch, $event])
-                        : route('meets.structure.events.age_groups.edit', [$meet, $event]) }}"
+                    <form method="GET"
+                          action="{{ route('meets.structure.events.age_groups.edit', [$meet, $event]) }}"
                           class="flex items-end gap-3"
                     >
                         <x-ui.field label="Search">
@@ -71,9 +66,9 @@
             </x-ui.card-header>
 
             <x-ui.card-body>
-                <form method="POST" action="{{ $isBatch
-                    ? route('imports.lenex.meet_structure.events.age_groups.update', [$batch, $event])
-                    : route('meets.structure.events.age_groups.update', [$meet, $event]) }}" class="space-y-4"
+                <form method="POST"
+                      action="{{ route('meets.structure.events.age_groups.update', [$meet, $event]) }}"
+                      class="space-y-4"
                 >
                     @csrf
                     @method('PUT')
@@ -128,7 +123,7 @@
                     @endif
 
                     <div class="flex items-center justify-end gap-2 pt-2">
-                        <a href="{{ route('imports.lenex.meet_structure.events.edit', [$batch, $event]) }}">
+                        <a href="{{ route('meets.structure.events.edit', [$meet, $event]) }}">
                             <x-ui.button variant="secondary" type="button">Cancel</x-ui.button>
                         </a>
                         <x-ui.button variant="primary" type="submit">Save age groups</x-ui.button>

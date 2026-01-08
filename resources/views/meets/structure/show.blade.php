@@ -122,27 +122,51 @@
                                                     )
 
                                                     <div class="rounded-lg ring-1 ring-slate-200 p-3">
-                                                        <div class="font-medium text-slate-900">
-                                                            Event {{ $e->event_no ?? '—' }}
-                                                            @if($e->name)
-                                                                — {{ $e->name }}
-                                                            @endif
-                                                        </div>
+                                                        <div class="flex items-start justify-between gap-3">
+                                                            <div class="min-w-0">
+                                                                <div class="font-medium text-slate-900">
+                                                                    Event {{ $e->event_no ?? '—' }}
+                                                                    @if($e->name)
+                                                                        — {{ $e->name }}
+                                                                    @endif
+                                                                </div>
 
-                                                        <div class="text-sm text-slate-600">
-                                                            {{ $e->gender ?? '—' }}
-                                                            @if($e->distance)
-                                                                · {{ $e->distance }}m
-                                                            @endif
-                                                            @if($e->stroke)
-                                                                · {{ $e->stroke }}
-                                                            @endif
-                                                            @if($e->round)
-                                                                · {{ $e->round }}
-                                                            @endif
-                                                            @if($e->is_relay)
-                                                                · Relay
-                                                            @endif
+                                                                <div class="text-sm text-slate-600">
+                                                                    {{ $e->gender ?? '—' }}
+                                                                    @if($e->distance)
+                                                                        · {{ $e->distance }}m
+                                                                    @endif
+                                                                    @if($e->stroke)
+                                                                        · {{ $e->stroke }}
+                                                                    @endif
+                                                                    @if($e->round)
+                                                                        · {{ $e->round }}
+                                                                    @endif
+                                                                    @if($e->is_relay)
+                                                                        · Relay
+                                                                    @endif
+                                                                </div>
+                                                            </div>
+
+                                                            <div class="shrink-0 inline-flex items-center gap-2">
+                                                                <a href="{{ route('meets.structure.events.edit', [$meet, $e]) }}">
+                                                                    <x-ui.button variant="secondary">Edit</x-ui.button>
+                                                                </a>
+
+                                                                <a href="{{ route('meets.structure.events.age_groups.edit', [$meet, $e]) }}">
+                                                                    <x-ui.button variant="ghost">Age groups
+                                                                    </x-ui.button>
+                                                                </a>
+
+                                                                <form method="POST"
+                                                                      action="{{ route('meets.structure.events.destroy', [$meet, $e]) }}"
+                                                                      onsubmit="return confirm('Delete this event?')">
+                                                                    @csrf
+                                                                    @method('DELETE')
+                                                                    <x-ui.button variant="danger" type="submit">Delete
+                                                                    </x-ui.button>
+                                                                </form>
+                                                            </div>
                                                         </div>
 
                                                         <div class="mt-2 text-sm">

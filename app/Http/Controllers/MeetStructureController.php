@@ -4,10 +4,10 @@ namespace App\Http\Controllers;
 
 use App\Http\Requests\MeetEventRequest;
 use App\Http\Requests\MeetSessionRequest;
-use App\Models\ImportBatch;
 use App\Models\Meet;
 use App\Models\MeetEvent;
 use App\Models\MeetSession;
+use App\Models\ParaSwimStyle;
 use Illuminate\Http\Request;
 
 class MeetStructureController extends AbstractMeetStructureController
@@ -33,42 +33,54 @@ class MeetStructureController extends AbstractMeetStructureController
 
     public function editEvent(Meet $meet, MeetEvent $event)
     {
-        $meetId = (int) $meet->id;
+        $session = $event->meetSession; // siehe Relation unten
+        abort_unless($session && $session->meet_id === $meet->id, 404);
 
-        $this->assertEventBelongsToMeet($event, $meetId);
+        $swimStyles = ParaSwimStyle::query()
+            ->orderBy('relay_count')
+            ->orderBy('distance')
+            ->orderBy('stroke')
+            ->get();
 
-        $data = $this->buildTreeData($meetId, $event);
-
-        return view('imports.lenex.meet_structure.tree', [
-            'meet' => $data['meet'],
-            'sessions' => $data['sessions'],
-            'ageGroups' => $data['ageGroups'],
-            'selectedEvent' => $data['selectedEvent'],
+        return view('meets.structure.events.edit', [
+            'meet' => $meet,
+            'session' => $session,
+            'event' => $event,
+            'swimStyles' => $swimStyles,
         ]);
     }
 
-    public function updateEvent(Request $request, Meet $meet, MeetEvent $event)
+    public function updateEvent(MeetEventRequest $request, Meet $meet, MeetEvent $event)
     {
-        $meetId = (int) $meet->id;
+        $session = $event->meetSession;
+        abort_unless($session && $session->meet_id === $meet->id, 404);
 
-        $this->assertEventBelongsToMeet($event, $meetId);
+        $data = $request->validated();
 
-        $data = $request->validate([
-            'name' => ['nullable', 'string', 'max:255'],
-            'gender' => ['nullable', 'string', 'max:1'],
-            'distance' => ['nullable', 'integer', 'min:0', 'max:20000'],
-            'stroke' => ['nullable', 'string', 'max:20'],
-            'round' => ['nullable', 'string', 'max:20'],
-            'is_relay' => ['nullable', 'boolean'],
+        $exists = MeetEvent::query()
+            ->where('meet_session_id', $event->meet_session_id)
+            ->where('event_no', $data['event_no'])
+            ->where('id', '!=', $event->id)
+            ->exists();
+
+        if ($exists) {
+            return back()
+                ->withErrors(['event_no' => 'This event number is already used in this session.'])
+                ->withInput();
+        }
+
+        $event->update([
+            'event_no' => $data['event_no'],
+            'name' => $data['name'],
+            'gender' => $data['gender'] ?? null,
+            'distance' => $data['distance'] ?? null,
+            'stroke' => $data['stroke'] ?? null,
+            'round' => $data['round'] ?? null,
+            'is_relay' => (int) ($data['is_relay'] ?? false),
         ]);
 
-        $data['is_relay'] = (bool) ($data['is_relay'] ?? false);
-
-        $event->fill($data);
-        $event->save();
-
         return redirect()
-            ->route('meets.structure.events.edit', [$meet, $event])
+            ->route('meets.structure.show', $meet)
             ->with('status', 'Event updated.');
     }
 
@@ -80,7 +92,7 @@ class MeetStructureController extends AbstractMeetStructureController
 
         $data = $this->buildAgeGroupsEditorData($request, $meetId, $event);
 
-        return view('imports.lenex.meet_structure.event_age_groups', [
+        return view('meets.structure.events.age_groups', [
             'meet' => $meet,
             'event' => $event,
             'q' => $data['q'],
@@ -91,19 +103,15 @@ class MeetStructureController extends AbstractMeetStructureController
         ]);
     }
 
-    public function updateEventAgeGroups(Request $request, ImportBatch $batch, MeetEvent $event)
+    public function updateEventAgeGroups(Request $request, Meet $meet, MeetEvent $event)
     {
-        abort_unless($batch->status === 'committed', 404);
-        abort_unless($batch->type === 'meet_structure', 404);
-        abort_unless($batch->meet_id, 404);
-
-        $meetId = (int) $batch->meet_id;
+        $meetId = (int) $meet->id;
 
         $this->assertEventBelongsToMeet($event, $meetId);
 
         $data = $request->validate([
-            'age_group_ids' => ['array'],
-            'age_group_ids.*' => ['integer'],
+            'age_group_ids' => ['nullable', 'array'],
+            'age_group_ids.*' => ['integer', 'exists:meet_age_groups,id'],
         ]);
 
         $ids = array_values(array_unique(array_map('intval', $data['age_group_ids'] ?? [])));
@@ -113,7 +121,7 @@ class MeetStructureController extends AbstractMeetStructureController
         $event->meetAgeGroups()->sync($allowedIds);
 
         return redirect()
-            ->route('imports.lenex.meet_structure.events.edit', [$batch, $event])
+            ->route('meets.structure.show', $meet)
             ->with('status', 'Age groups updated.');
     }
 
@@ -197,9 +205,16 @@ class MeetStructureController extends AbstractMeetStructureController
     {
         abort_unless($session->meet_id === $meet->id, 404);
 
+        $swimStyles = ParaSwimStyle::query()
+            ->orderBy('relay_count')
+            ->orderBy('distance')
+            ->orderBy('stroke')
+            ->get();
+
         return view('meets.structure.events.create', [
             'meet' => $meet,
             'session' => $session,
+            'swimStyles' => $swimStyles,
         ]);
     }
 
@@ -242,8 +257,7 @@ class MeetStructureController extends AbstractMeetStructureController
 
     public function destroyEvent(Meet $meet, MeetEvent $event)
     {
-        // Ownership check via session->meet_id
-        $session = $event->session; // relation needed, see note below
+        $session = $event->meetSession;
         abort_unless($session && $session->meet_id === $meet->id, 404);
 
         $event->delete();

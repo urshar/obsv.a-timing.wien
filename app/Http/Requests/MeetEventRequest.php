@@ -18,10 +18,14 @@ class MeetEventRequest extends FormRequest
             'name' => ['required', 'string', 'max:255'],
 
             'gender' => ['nullable', 'in:M,F,X'],
-            'distance' => ['nullable', 'integer', 'min:1'],
-            'stroke' => ['nullable', 'string', 'max:50'],
-            'round' => ['nullable', 'string', 'max:50'],
 
+            // distance bleibt optional (du kannst sie aus style ableiten – später)
+            'distance' => ['nullable', 'integer', 'min:1'],
+
+            // stroke wird jetzt ParaSwimStyle.key
+            'stroke' => ['nullable', 'string', 'max:50', 'exists:para_swim_styles,key'],
+
+            'round' => ['nullable', 'string', 'max:50'],
             'is_relay' => ['nullable', 'boolean'],
         ];
     }
