@@ -31,7 +31,10 @@ class MeetEvent extends Model
 
     public function meetAgeGroups(): BelongsToMany
     {
-        return $this->belongsToMany(MeetAgeGroup::class, 'age_group_event', 'meet_event_id',
-            'age_group_id')->withTimestamps();
+        return $this->belongsToMany(
+            MeetAgeGroup::class,
+            'age_group_event',
+            'meet_event_id',
+            'age_group_id');
     }
 }

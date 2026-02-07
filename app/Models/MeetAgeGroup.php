@@ -16,6 +16,9 @@ class MeetAgeGroup extends Model
         'name',
         'gender',
         'handicap',
+        'code',
+        'min_age',
+        'max_age',
     ];
 
     /**

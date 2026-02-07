@@ -2,9 +2,11 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Requests\MeetAgeGroupRequest;
 use App\Http\Requests\MeetEventRequest;
 use App\Http\Requests\MeetSessionRequest;
 use App\Models\Meet;
+use App\Models\MeetAgeGroup;
 use App\Models\MeetEvent;
 use App\Models\MeetSession;
 use App\Models\ParaSwimStyle;
@@ -265,5 +267,77 @@ class MeetStructureController extends AbstractMeetStructureController
         return redirect()
             ->route('meets.structure.show', $meet)
             ->with('status', 'Event deleted.');
+    }
+
+    public function createAgeGroup(Meet $meet)
+    {
+        return view('meets.structure.age_groups.create', [
+            'meet' => $meet,
+        ]);
+    }
+
+    public function storeAgeGroup(MeetAgeGroupRequest $request, Meet $meet)
+    {
+        $data = $request->validated();
+
+        MeetAgeGroup::query()->create([
+            'meet_id' => $meet->id,
+            'name' => $data['name'],
+            'gender' => $data['gender'] ?? null,
+            'code' => $data['code'] ?? null,
+            'min_age' => $data['min_age'] ?? null,
+            'max_age' => $data['max_age'] ?? null,
+            'handicap' => $data['handicap'] ?? null,
+        ]);
+
+        return redirect()
+            ->route('meets.structure.show', $meet)
+            ->with('status', 'Age group created.');
+    }
+
+    public function editAgeGroup(Meet $meet, MeetAgeGroup $ageGroup)
+    {
+        $this->assertAgeGroupBelongsToMeet($ageGroup, (int) $meet->id);
+
+        return view('meets.structure.age_groups.edit', [
+            'meet' => $meet,
+            'ageGroup' => $ageGroup,
+        ]);
+    }
+
+    protected function assertAgeGroupBelongsToMeet(MeetAgeGroup $ageGroup, int $meetId): void
+    {
+        abort_unless((int) $ageGroup->meet_id === $meetId, 404);
+    }
+
+    public function updateAgeGroup(MeetAgeGroupRequest $request, Meet $meet, MeetAgeGroup $ageGroup)
+    {
+        $this->assertAgeGroupBelongsToMeet($ageGroup, (int) $meet->id);
+
+        $data = $request->validated();
+
+        $ageGroup->update([
+            'name' => $data['name'],
+            'gender' => $data['gender'] ?? null,
+            'code' => $data['code'] ?? null,
+            'min_age' => $data['min_age'] ?? null,
+            'max_age' => $data['max_age'] ?? null,
+            'handicap' => $data['handicap'] ?? null,
+        ]);
+
+        return redirect()
+            ->route('meets.structure.show', $meet)
+            ->with('status', 'Age group updated.');
+    }
+
+    public function destroyAgeGroup(Meet $meet, MeetAgeGroup $ageGroup)
+    {
+        $this->assertAgeGroupBelongsToMeet($ageGroup, (int) $meet->id);
+
+        $ageGroup->delete();
+
+        return redirect()
+            ->route('meets.structure.show', $meet)
+            ->with('status', 'Age group deleted.');
     }
 }

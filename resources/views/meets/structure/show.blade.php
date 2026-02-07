@@ -115,13 +115,9 @@
                                         @else
                                             <div class="space-y-3">
                                                 @foreach($sessionEvents as $e)
-                                                    @php(
-                                                        $ag = $e->meet_age_group_id
-                                                            ? ($ageGroupsById[$e->meet_age_group_id] ?? null)
-                                                            : null
-                                                    )
+                                                    <div class="rounded-lg ring-1 ring-slate-200 p-3 space-y-2">
 
-                                                    <div class="rounded-lg ring-1 ring-slate-200 p-3">
+                                                        {{-- Event header --}}
                                                         <div class="flex items-start justify-between gap-3">
                                                             <div class="min-w-0">
                                                                 <div class="font-medium text-slate-900">
@@ -169,27 +165,14 @@
                                                             </div>
                                                         </div>
 
-                                                        <div class="mt-2 text-sm">
-                                                            <div class="text-slate-500">Age group</div>
+                                                        {{-- Assigned Age Groups (Pivot, Badges, Fold) --}}
+                                                        <x-meet.age-group-badges :meet="$meet" :event="$e" :max="4"/>
 
-                                                            @if($ag)
-                                                                <div class="text-slate-900">
-                                                                    {{ $ag->name ?? '—' }}
-                                                                    @if($ag->gender)
-                                                                        ({{ $ag->gender }})
-                                                                    @endif
-                                                                    @if($ag->code)
-                                                                        · {{ $ag->code }}
-                                                                    @endif
-                                                                </div>
-                                                            @else
-                                                                <div class="text-slate-600">—</div>
-                                                            @endif
-                                                        </div>
                                                     </div>
                                                 @endforeach
                                             </div>
                                         @endif
+
                                     </x-ui.card-body>
                                 </x-ui.card>
                             @endforeach
@@ -201,41 +184,98 @@
             {{-- Age Groups (RIGHT / narrow) --}}
             <x-ui.card>
                 <x-ui.card-header>
-                    <div class="font-semibold text-slate-900">Age groups</div>
+                    <div class="flex items-center justify-between gap-3">
+                        <div class="font-semibold text-slate-900">Age groups</div>
+
+                        <a href="{{ route('meets.structure.age_groups.create', $meet) }}">
+                            <x-ui.button variant="secondary">Add</x-ui.button>
+                        </a>
+                    </div>
                 </x-ui.card-header>
 
                 <x-ui.card-body>
-                    @if($ageGroups->isEmpty())
-                        <div class="text-sm text-slate-600">No age groups.</div>
-                    @else
+                    @php($usedIds = collect($usedAgeGroupIds ?? []))
+                    @php($used = $ageGroups->filter(fn ($ag) => $usedIds->contains($ag->id)))
+                    @php($unused = $ageGroups->reject(fn ($ag) => $usedIds->contains($ag->id)))
+
+                    {{-- Used --}}
+                    <div class="space-y-2">
+                        <div class="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                            Used ({{ $used->count() }})
+                        </div>
+
                         <ul class="text-sm space-y-2">
-                            @foreach($ageGroups as $ag)
+                            @foreach($used as $ag)
                                 <li>
                                     <div class="font-medium text-slate-900">
                                         {{ $ag->name ?? '—' }}
                                     </div>
 
-                                    <div class="text-xs text-slate-600">
-                                        {{ $ag->gender ?? '' }}
-                                        @if($ag->code)
-                                            · {{ $ag->code }}
-                                        @endif
+                                    @php($label = ParaSwim::ageLabel($ag->min_age, $ag->max_age))
+                                    @php($badgeItems = array_values(array_filter([
+                                        $ag->gender ?: null,
+                                        $label !== '' ? $label : null,
+                                    ])))
 
-                                        @php($label = ParaSwim::ageLabel($ag->min_age, $ag->max_age))
+                                    <div class="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-600">
+                                        @foreach($badgeItems as $b)
+                                            <x-ui.badge>{{ $b }}</x-ui.badge>
+                                        @endforeach
 
-                                        @if($label !== '')
-                                            <div class="text-xs text-slate-500">
-                                                {{ $label }}
-                                            </div>
+                                        @if(!empty($ag->code))
+                                            <span class="text-slate-400">Code: {{ $ag->code }}</span>
                                         @endif
                                     </div>
                                 </li>
                             @endforeach
-                        </ul>
-                    @endif
-                </x-ui.card-body>
-            </x-ui.card>
 
+                            @if($used->isEmpty())
+                                <li class="text-sm text-slate-600">No age groups assigned to events yet.</li>
+                            @endif
+                        </ul>
+                    </div>
+
+                    <div class="my-4 border-t border-slate-200"></div>
+
+                    {{-- Not used yet --}}
+                    <div class="space-y-2">
+                        <div class="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                            Not used yet ({{ $unused->count() }})
+                        </div>
+
+                        <ul class="text-sm space-y-2">
+                            @foreach($unused as $ag)
+                                <li>
+                                    <div class="font-medium text-slate-900">
+                                        {{ $ag->name ?? '—' }}
+                                    </div>
+
+                                    @php($label = ParaSwim::ageLabel($ag->min_age, $ag->max_age))
+                                    @php($badgeItems = array_values(array_filter([
+                                        $ag->gender ?: null,
+                                        $label !== '' ? $label : null,
+                                    ])))
+
+                                    <div class="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-600">
+                                        @foreach($badgeItems as $b)
+                                            <x-ui.badge>{{ $b }}</x-ui.badge>
+                                        @endforeach
+
+                                        @if(!empty($ag->code))
+                                            <span class="text-slate-400">Code: {{ $ag->code }}</span>
+                                        @endif
+                                    </div>
+                                </li>
+                            @endforeach
+
+                            @if($unused->isEmpty())
+                                <li class="text-sm text-slate-600">All age groups are used.</li>
+                            @endif
+                        </ul>
+                    </div>
+                </x-ui.card-body>
+                
+            </x-ui.card>
         </div>
     </div>
 @endsection

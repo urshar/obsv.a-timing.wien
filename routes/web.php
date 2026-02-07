@@ -52,6 +52,20 @@ Route::prefix('meets/{meet}/structure')->name('meets.structure.')->group(functio
     Route::put('/events/{event}/age-groups', [MeetStructureController::class, 'updateEventAgeGroups'])
         ->name('events.age_groups.update');
 
+    // AgrGroups CRUD
+    Route::get('age-groups/create', [MeetStructureController::class, 'createAgeGroup'])
+        ->name('age_groups.create');
+    Route::post('age-groups', [MeetStructureController::class, 'storeAgeGroup'])
+        ->name('age_groups.store');
+
+    Route::get('age-groups/{ageGroup}/edit', [MeetStructureController::class, 'editAgeGroup'])
+        ->name('age_groups.edit');
+    Route::put('age-groups/{ageGroup}', [MeetStructureController::class, 'updateAgeGroup'])
+        ->name('age_groups.update');
+
+    Route::delete('age-groups/{ageGroup}', [MeetStructureController::class, 'destroyAgeGroup'])
+        ->name('age_groups.destroy');
+
     // Sessions CRUD
     Route::get('/sessions/create', [MeetStructureController::class, 'createSession'])->name('sessions.create');
     Route::post('/sessions', [MeetStructureController::class, 'storeSession'])->name('sessions.store');

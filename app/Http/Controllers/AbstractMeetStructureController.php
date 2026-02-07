@@ -83,6 +83,11 @@ abstract class AbstractMeetStructureController extends Controller
 
         $events = ! empty($sessionIds)
             ? MeetEvent::query()
+                ->with([
+                    'meetAgeGroups' => function ($q) {
+                        $q->orderBy('id');
+                    },
+                ])
                 ->whereIn('meet_session_id', $sessionIds)
                 ->orderBy('event_no')
                 ->orderBy('id')
@@ -91,12 +96,19 @@ abstract class AbstractMeetStructureController extends Controller
 
         $eventsBySession = $events->groupBy('meet_session_id');
 
+        $usedAgeGroupIds = $events
+            ->flatMap(fn ($ev) => $ev->meetAgeGroups?->pluck('id') ?? collect())
+            ->unique()
+            ->values()
+            ->all();
+
         return [
             'meet' => $meet,
             'ageGroups' => $ageGroups,
             'ageGroupsById' => $ageGroupsById,
             'sessions' => $sessions,
             'eventsBySession' => $eventsBySession,
+            'usedAgeGroupIds' => $usedAgeGroupIds,
         ];
     }
 
