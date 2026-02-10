@@ -29,6 +29,11 @@ class MeetEvent extends Model
         return $this->belongsTo(MeetSession::class, 'meet_session_id');
     }
 
+    /**
+     * Canonical age-group assignment for events.
+     * IMPORTANT: Pivot table age_group_event is the source of truth.
+     * meet_events.meet_age_group_id is legacy/read-only (kept for backward compatibility).
+     */
     public function meetAgeGroups(): BelongsToMany
     {
         return $this->belongsToMany(

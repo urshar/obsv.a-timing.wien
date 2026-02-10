@@ -46,9 +46,6 @@
                         @if($ag->gender)
                             ({{ $ag->gender }})
                         @endif
-                        @if($ag->code)
-                            · {{ $ag->code }}
-                        @endif
                     </x-ui.badge>
                 </a>
             @endforeach

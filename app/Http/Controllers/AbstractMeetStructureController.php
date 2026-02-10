@@ -7,6 +7,7 @@ use App\Models\MeetAgeGroup;
 use App\Models\MeetEvent;
 use App\Models\MeetSession;
 use App\Support\ParaSwim;
+use DB;
 use Illuminate\Http\Request;
 use Illuminate\Pagination\LengthAwarePaginator;
 
@@ -81,6 +82,15 @@ abstract class AbstractMeetStructureController extends Controller
 
         $sessionIds = $sessions->pluck('id')->all();
 
+        $usageCounts = ! empty($eventIds)
+            ? DB::table('age_group_event')
+                ->whereIn('meet_event_id', $eventIds)
+                ->selectRaw('age_group_id, COUNT(*) as cnt')
+                ->groupBy('age_group_id')
+                ->pluck('cnt', 'age_group_id')
+                ->all()
+            : [];
+
         $events = ! empty($sessionIds)
             ? MeetEvent::query()
                 ->with([
@@ -109,6 +119,7 @@ abstract class AbstractMeetStructureController extends Controller
             'sessions' => $sessions,
             'eventsBySession' => $eventsBySession,
             'usedAgeGroupIds' => $usedAgeGroupIds,
+            'ageGroupUsageCounts' => $usageCounts,
         ];
     }
 

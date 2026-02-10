@@ -12,6 +12,15 @@ use App\Models\MeetSession;
 use App\Models\ParaSwimStyle;
 use Illuminate\Http\Request;
 
+/**
+ * Meet Structure editor.
+ *
+ * Canonical assignment:
+ *  - Event ↔ AgeGroups via pivot table age_group_event
+ *
+ * Legacy / read-only:
+ *  - meet_events.meet_age_group_id (do not write, do not validate, do not rely on it)
+ */
 class MeetStructureController extends AbstractMeetStructureController
 {
     public function show(Meet $meet)
@@ -71,6 +80,10 @@ class MeetStructureController extends AbstractMeetStructureController
                 ->withInput();
         }
 
+        /**
+         * NOTE: age_group_event pivot is canonical for Event ↔ AgeGroups.
+         * Do NOT touch meet_age_group_id here – it is legacy/read-only.
+         */
         $event->update([
             'event_no' => $data['event_no'],
             'name' => $data['name'],
@@ -237,6 +250,11 @@ class MeetStructureController extends AbstractMeetStructureController
                 ->withInput();
         }
 
+        /**
+         * NOTE: Pivot table age_group_event is canonical for event ↔ age-group assignment.
+         * meet_events.meet_age_group_id is legacy/read-only (kept for backward compatibility).
+         * Do not write it here.
+         */
         MeetEvent::query()->create([
             'meet_session_id' => $session->id,
             'event_no' => $data['event_no'],
@@ -247,9 +265,6 @@ class MeetStructureController extends AbstractMeetStructureController
             'stroke' => $data['stroke'] ?? null,
             'round' => $data['round'] ?? null,
             'is_relay' => (int) ($data['is_relay'] ?? false),
-
-            // legacy field optional: leave null for manual
-            'meet_age_group_id' => null,
         ]);
 
         return redirect()
@@ -339,5 +354,80 @@ class MeetStructureController extends AbstractMeetStructureController
         return redirect()
             ->route('meets.structure.show', $meet)
             ->with('status', 'Age group deleted.');
+    }
+
+    public function editAgeGroupEvents(Meet $meet, MeetAgeGroup $ageGroup)
+    {
+        abort_unless((int) $ageGroup->meet_id === (int) $meet->id, 404);
+
+        $meetId = (int) $meet->id;
+
+        $sessions = MeetSession::query()
+            ->where('meet_id', $meetId)
+            ->orderBy('session_no')
+            ->orderBy('id')
+            ->get();
+
+        $sessionIds = $sessions->pluck('id')->all();
+
+        $events = ! empty($sessionIds)
+            ? MeetEvent::query()
+                ->whereIn('meet_session_id', $sessionIds)
+                ->with([
+                    'meetAgeGroups' => function ($q) use ($ageGroup) {
+                        // reicht als "mark selected"; wir können auch ohne eager loading arbeiten,
+                        // aber so ist es einfach im Blade.
+                        $q->where('meet_age_groups.id', $ageGroup->id);
+                    },
+                ])
+                ->orderBy('meet_session_id')
+                ->orderBy('event_no')
+                ->orderBy('id')
+                ->get()
+            : collect();
+
+        $eventsBySession = $events->groupBy('meet_session_id');
+
+        $selectedEventIds = $ageGroup->meetEvents()
+            ->whereIn('meet_events.meet_session_id', $sessionIds)
+            ->pluck('meet_events.id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
+
+        return view('meets.structure.age_groups.assign', [
+            'meet' => $meet,
+            'ageGroup' => $ageGroup,
+            'sessions' => $sessions,
+            'eventsBySession' => $eventsBySession,
+            'selectedEventIds' => $selectedEventIds,
+        ]);
+    }
+
+    public function updateAgeGroupEvents(Request $request, Meet $meet, MeetAgeGroup $ageGroup)
+    {
+        abort_unless((int) $ageGroup->meet_id === (int) $meet->id, 404);
+
+        $data = $request->validate([
+            'event_ids' => ['array'],
+            'event_ids.*' => ['integer'],
+        ]);
+
+        $ids = array_values(array_unique(array_map('intval', $data['event_ids'] ?? [])));
+
+        // nur Events zulassen, die wirklich zu diesem Meet gehören
+        $allowedEventIds = MeetEvent::query()
+            ->whereIn('id', $ids)
+            ->whereHas('session', function ($q) use ($meet) {
+                $q->where('meet_id', $meet->id);
+            })
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
+
+        $ageGroup->meetEvents()->sync($allowedEventIds);
+
+        return redirect()
+            ->route('meets.structure.show', $meet)
+            ->with('status', 'Age group assignments updated.');
     }
 }
