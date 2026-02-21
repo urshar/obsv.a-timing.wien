@@ -20,10 +20,11 @@ return new class extends Migration
             $table->foreignId('club_id')->nullable()->constrained('clubs')->cascadeOnUpdate()->nullOnDelete();
 
             // para swim style nur bei entries/results
-            $table->foreignId('para_swim_style_id')->nullable()->constrained('para_swim_styles')->cascadeOnUpdate()->nullOnDelete();
+            $table->foreignId('swim_style_id')->nullable()->constrained('swim_styles')->cascadeOnUpdate()->nullOnDelete();
 
             // Seed/entry time
             $table->string('seed_time', 20)->nullable();
+            $table->unsignedInteger('seed_time_cs')->nullable()->after('seed_time');
 
             // optional: heat/lane
             $table->unsignedSmallInteger('heat')->nullable();
@@ -33,6 +34,8 @@ return new class extends Migration
 
             $table->index(['meet_event_id', 'club_id']);
             $table->index(['meet_event_id', 'athlete_id']);
+            $table->index(['meet_event_id', 'seed_time_cs'], 'meet_entries_event_seed_cs_idx');
+            $table->unique(['meet_event_id', 'athlete_id'], 'meet_entries_event_athlete_unique');
         });
 
         Schema::create('meet_results', function (Blueprint $table) {
@@ -46,7 +49,7 @@ return new class extends Migration
             $table->foreignId('athlete_id')->nullable()->constrained('athletes')->cascadeOnUpdate()->nullOnDelete();
             $table->foreignId('club_id')->nullable()->constrained('clubs')->cascadeOnUpdate()->nullOnDelete();
 
-            $table->foreignId('para_swim_style_id')->nullable()->constrained('para_swim_styles')->cascadeOnUpdate()->nullOnDelete();
+            $table->foreignId('swim_style_id')->nullable()->constrained('swim_styles')->cascadeOnUpdate()->nullOnDelete();
 
             $table->string('result_time', 20)->nullable(); // "1:02.34" o.ä.
             $table->string('status', 10)->nullable();      // OK/DSQ/DNF/...

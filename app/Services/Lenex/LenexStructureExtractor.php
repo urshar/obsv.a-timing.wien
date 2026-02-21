@@ -28,7 +28,8 @@ class LenexStructureExtractor
 
             $eventNodes = $session->xpath('./*[local-name()="EVENTS"]/*[local-name()="EVENT"]') ?: [];
             foreach ($eventNodes as $event) {
-                $eventNo = $this->intAttrAnyNullable($event, ['number', 'no', 'eventid', 'event_no']);
+                $eventNo = $this->intAttrAnyNullable($event, ['number', 'no', 'event_no']);
+                $lenexEventId = $this->intAttrAnyNullable($event, ['eventid']);
                 $round = $this->strAttrAnyNullable($event, ['round', 'roundid']);
                 $gender = $this->normGender($this->strAttrAnyNullable($event, ['gender']));
 
@@ -74,7 +75,9 @@ class LenexStructureExtractor
                 $eventAgeGroups = array_values(array_unique($eventAgeGroups));
 
                 $eventsOut[] = [
+                    'lenex_event_id' => $lenexEventId,
                     'no' => $eventNo,
+                    'event_no' => $eventNo,
                     'name' => $eventName,
                     'gender' => $gender,
                     'round' => $round,

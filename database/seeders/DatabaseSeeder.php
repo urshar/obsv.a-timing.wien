@@ -24,7 +24,7 @@ class DatabaseSeeder extends Seeder
             ContinentSeeder::class,
             NationFromSqlSeeder::class,
             AustriaRegionSeeder::class,
-            ParaSwimStyleSeeder::class,
+            SwimStyleSeeder::class,
         ]);
     }
 }

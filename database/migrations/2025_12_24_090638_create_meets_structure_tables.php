@@ -97,6 +97,7 @@ return new class extends Migration
             $table->foreignId('meet_age_group_id')->nullable()->constrained('meet_age_groups')->cascadeOnUpdate()->nullOnDelete();
 
             $table->unsignedSmallInteger('event_no')->nullable();
+            $table->unsignedInteger('lenex_event_id')->nullable()->after('event_no');
             $table->string('name')->nullable();
 
             $table->char('gender', 1)->nullable(); // M/F/X
@@ -107,8 +108,9 @@ return new class extends Migration
 
             $table->timestamps();
 
-            $table->unique(['meet_session_id', 'event_no'], 'meet_events_session_id_event_no_unique');
+            $table->index(['meet_session_id', 'lenex_event_id'], 'meet_events_session_id_lenex_event_id_idx');
             $table->index(['distance', 'stroke', 'gender']);
+            $table->unique(['meet_session_id', 'event_no'], 'meet_events_session_id_event_no_unique');
         });
     }
 

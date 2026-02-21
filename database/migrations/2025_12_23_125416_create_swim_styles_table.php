@@ -8,7 +8,7 @@ return new class extends Migration
 {
     public function up(): void
     {
-        Schema::create('para_swim_styles', function (Blueprint $table) {
+        Schema::create('swim_styles', function (Blueprint $table) {
             $table->charset('utf8mb4');
             $table->collation('utf8mb4_unicode_ci');
 
@@ -33,6 +33,6 @@ return new class extends Migration
 
     public function down(): void
     {
-        Schema::dropIfExists('para_swim_styles');
+        Schema::dropIfExists('swim_styles');
     }
 };

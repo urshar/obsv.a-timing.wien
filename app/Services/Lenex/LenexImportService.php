@@ -11,6 +11,7 @@ use App\Models\ImportMapping;
 use App\Models\Meet;
 use App\Support\Concerns\DeletesInChunks;
 use App\Support\Concerns\LenexXmlValueHelpers;
+use App\Support\ParaSwim;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -999,6 +1000,7 @@ class LenexImportService
                 $eventRows[] = [
                     'meet_session_id' => $sessionId,
                     'event_no' => $eventNo,
+                    'lenex_event_id' => isset($e['lenex_event_id']) ? (int) $e['lenex_event_id'] : null,
 
                     // optional/legacy (kannst du später entfernen)
                     'meet_age_group_id' => $legacyAgId,
@@ -1021,7 +1023,10 @@ class LenexImportService
                 'meet_events',
                 $eventRows,
                 ['meet_session_id', 'event_no'],
-                ['meet_age_group_id', 'name', 'gender', 'distance', 'stroke', 'round', 'is_relay', 'updated_at']
+                [
+                    'meet_age_group_id', 'lenex_event_id', 'name', 'gender', 'distance', 'stroke', 'round', 'is_relay',
+                    'updated_at',
+                ]
             );
         }
 
@@ -1069,21 +1074,24 @@ class LenexImportService
             }
         }
 
+        // dedupe, weil mehrere LENEX codes auf dieselbe canonical AG mappen können
         if (! empty($pivotRows)) {
-            DB::table('age_group_event')->upsert(
-                $pivotRows,
-                ['meet_event_id', 'age_group_id'],
-                []
-            );
+            $pivotRows = collect($pivotRows)
+                ->unique(fn ($r) => $r['meet_event_id'].':'.$r['age_group_id'])
+                ->values()
+                ->all();
+
+            // pivot: duplicates einfach ignorieren (stabil in SQLite + MySQL)
+            DB::table('age_group_event')->insertOrIgnore($pivotRows);
         }
 
         /*
- * MEET META (write to meets)
- * - course from MEET tag
- * - age_date from AGEDATE
- * - contact_* from CONTACT
- * - start/end derived from sessions if not set
- */
+         * MEET META (write to meets)
+         * - course from MEET tag
+         * - age_date from AGEDATE
+         * - contact_* from CONTACT
+         * - start/end derived from sessions if not set
+         */
         $meetUpdates = [];
 
         // course
@@ -1145,17 +1153,24 @@ class LenexImportService
         }
     }
 
-    private function normString(?string $value, int $maxLen = 255): ?string
+    private function normLenexId(mixed $raw): ?int
     {
-        if ($value === null) {
-            return null;
-        }
-        $v = trim($value);
-        if ($v === '') {
+        if ($raw === null) {
             return null;
         }
 
-        return mb_substr($v, 0, $maxLen);
+        $s = trim((string) $raw);
+        if ($s === '') {
+            return null;
+        }
+
+        if (! ctype_digit($s)) {
+            return null;
+        }
+
+        $v = (int) $s;
+
+        return $v > 0 ? $v : null;
     }
 
     /*
@@ -1195,6 +1210,19 @@ class LenexImportService
         return null;
     }
 
+    private function normString(?string $value, int $maxLen = 255): ?string
+    {
+        if ($value === null) {
+            return null;
+        }
+        $v = trim($value);
+        if ($v === '') {
+            return null;
+        }
+
+        return mb_substr($v, 0, $maxLen);
+    }
+
     /**
      * Upsert ohne created_at-Überschreibung: nutzt Query Builder upsert().
      *
@@ -1217,400 +1245,6 @@ class LenexImportService
             $uniqueBy,
             $updateColumns
         );
-    }
-
-    private function importEntriesAndOrResults(ImportBatch $batch, SimpleXMLElement $xml, Meet $meet): void
-    {
-        $eventIndexes = $this->buildEventIndexesForMeet($meet);
-
-        $clubIdBySourceKey = $this->resolveEntitiesForBatch($batch, 'club');
-        $athleteIdBySourceKey = $this->resolveEntitiesForBatch($batch, 'athlete');
-
-        if ($batch->type === 'entries') {
-            $entries = $xml->xpath('//ENTRY') ?: [];
-            foreach ($entries as $en) {
-                $meetEventId = $this->resolveMeetEventIdFromNode($en, $eventIndexes);
-                if (! $meetEventId) {
-                    $this->createUnresolvedEventIssue($batch, 'entry', $en);
-
-                    continue;
-                }
-
-                $clubId = $this->resolveClubIdFromNode($en, $clubIdBySourceKey);
-                $athleteId = $this->resolveAthleteIdFromNode($en, $athleteIdBySourceKey);
-                $seed = $this->strAttrNullable($en, 'entrytime') ?? $this->strAttrNullable($en, 'seed');
-
-                $this->insertEntry($meetEventId, $athleteId, $clubId, $seed);
-            }
-        }
-
-        if ($batch->type === 'results') {
-            $results = $xml->xpath('//RESULT') ?: [];
-            foreach ($results as $r) {
-                $meetEventId = $this->resolveMeetEventIdFromNode($r, $eventIndexes);
-                if (! $meetEventId) {
-                    $this->createUnresolvedEventIssue($batch, 'result', $r);
-
-                    continue;
-                }
-
-                $clubId = $this->resolveClubIdFromNode($r, $clubIdBySourceKey);
-                $athleteId = $this->resolveAthleteIdFromNode($r, $athleteIdBySourceKey);
-
-                $time = $this->strAttrNullable($r, 'swimtime') ?? $this->strAttrNullable($r, 'time');
-                $status = $this->strAttrNullable($r, 'status');
-
-                $rank = $this->intAttrNullable($r, 'rank') ?? $this->intAttrNullable($r, 'place');
-                $points = $this->intAttrNullable($r, 'points');
-
-                $resultId = $this->insertResult(
-                    $meetEventId,
-                    $athleteId,
-                    $clubId,
-                    $time,
-                    $status,
-                    $rank,
-                    $points
-                );
-
-                $this->insertResultSplits($resultId, $r);
-            }
-        }
-    }
-
-    private function buildEventIndexesForMeet(Meet $meet): array
-    {
-        $meetEvents = DB::table('meet_events')
-            ->join('meet_sessions', 'meet_sessions.id', '=', 'meet_events.meet_session_id')
-            ->where('meet_sessions.meet_id', $meet->id)
-            ->select('meet_events.*')
-            ->get();
-
-        $byNo = $meetEvents
-            ->filter(fn ($e) => $e->event_no !== null)
-            ->keyBy(fn ($e) => (string) $e->event_no);
-
-        $byComposite = $meetEvents->mapWithKeys(function ($e) {
-            $key = $this->eventCompositeKey(
-                $e->distance !== null ? (int) $e->distance : null,
-                $e->stroke !== null ? (string) $e->stroke : null,
-                $e->gender !== null ? (string) $e->gender : null,
-                $e->round !== null ? (string) $e->round : null,
-                (bool) $e->is_relay
-            );
-
-            return $key ? [$key => $e] : [];
-        });
-
-        return [
-            'byNo' => $byNo,
-            'byComposite' => $byComposite,
-        ];
-    }
-
-    private function eventCompositeKey(
-        ?int $distance,
-        ?string $stroke,
-        ?string $gender,
-        ?string $round,
-        bool $isRelay
-    ): ?string {
-        if ($distance === null || ! $stroke) {
-            return null;
-        }
-
-        return implode('|', [
-            (string) $distance,
-            strtoupper(trim($stroke)),
-            strtoupper(trim((string) $gender)),
-            strtolower(trim((string) $round)),
-            $isRelay ? 'relay' : 'individual',
-        ]);
-    }
-
-    private function resolveEntitiesForBatch(ImportBatch $batch, string $entityType): array
-    {
-        /** @var Collection<string, ImportMapping> $maps */
-        $maps = $batch->mappings()->where('entity_type', $entityType)->get()->keyBy('source_key');
-
-        /** @var Collection<string, ImportIssue> $issues */
-        $issues = $batch->issues()->where('entity_type', $entityType)->get()->keyBy('entity_key');
-
-        $idByKey = [];
-
-        foreach ($maps as $sourceKey => $map) {
-            if ($map->action === 'ignore') {
-                continue;
-            }
-
-            if ($map->action === 'link' && $map->target_id) {
-                $idByKey[$sourceKey] = $map->target_id;
-
-                continue;
-            }
-
-            $issue = $issues->get($sourceKey);
-            $payload = $issue?->payload_json ?? [];
-
-            if ($entityType === 'club') {
-
-                // Officials-only Clubs niemals anlegen
-                if (! empty($payload['officials_only_source'])) {
-                    continue;
-                }
-
-                $nationCode = trim((string) ($payload['nation'] ?? ''));
-                $nationId = $nationCode !== '' ? $this->resolveNationId($nationCode) : null;
-
-                // OPTIONALER TEIL: Warnung bei unbekanntem IOC
-                if ($nationCode !== '' && ! $nationId) {
-                    $this->createIssue(
-                        batch: $batch,
-                        entityType: 'club',
-                        entityKey: $sourceKey,
-                        severity: 'warn',
-                        message: "Unknown IOC nation code '{$nationCode}'. Club will be created without nation.",
-                        payload: $payload
-                    );
-                }
-
-                $club = Club::create([
-                    'nation_id' => $nationId, // kann null sein
-                    'name' => $payload['name'] ?? 'Club',
-                    'short_name' => $payload['short_name'] ?? null,
-                    'officials_only' => false,
-                ]);
-
-                $idByKey[$sourceKey] = $club->id;
-                $map->update([
-                    'action' => 'link',
-                    'target_id' => $club->id,
-                ]);
-            }
-
-            if ($entityType === 'athlete') {
-                $ath = Athlete::create([
-                    'last_name' => $payload['last_name'] ?? '—',
-                    'first_name' => $payload['first_name'] ?? null,
-                    'birth_year' => $payload['birth_year'] ?? null,
-                    'gender' => $payload['gender'] ?? null,
-                ]);
-
-                $idByKey[$sourceKey] = $ath->id;
-                $map->update(['action' => 'link', 'target_id' => $ath->id]);
-            }
-        }
-
-        return $idByKey;
-    }
-
-    private function resolveMeetEventIdFromNode(SimpleXMLElement $node, array $eventIndexes): ?int
-    {
-        $byNo = $eventIndexes['byNo'] ?? [];
-        $byComposite = $eventIndexes['byComposite'] ?? [];
-
-        // 1) Primary: event / eventnumber (already string|null)
-        $eventNo = $this->strAttrNullable($node, 'event') ?? $this->strAttrNullable($node, 'eventnumber');
-        if ($eventNo !== null && isset($byNo[$eventNo])) {
-            return $byNo[$eventNo]->id;
-        }
-
-        // 2) Fallback: nearest EVENT ancestor and composite match
-        $eventAncestor = $node->xpath('ancestor::EVENT[1]') ?: [];
-        $eventNode = $eventAncestor[0] ?? null;
-
-        if (! $eventNode instanceof SimpleXMLElement) {
-            return null;
-        }
-
-        $distance = $this->intAttrNullable($eventNode, 'distance');
-        $stroke = $this->strAttrNullable($eventNode, 'stroke');
-        $gender = $this->genderChar($this->strAttrNullable($eventNode, 'gender'));
-        $round = $this->strAttrNullable($eventNode, 'round');
-
-        $isRelay = $this->boolAttr($eventNode, ['relay', 'isrelay']);
-        $isRelay = $isRelay ?? (! empty($eventNode->xpath('.//RELAY')));
-
-        $key = $this->eventCompositeKey($distance, $stroke, $gender, $round, $isRelay);
-        if ($key !== null && isset($byComposite[$key])) {
-            return $byComposite[$key]->id;
-        }
-
-        return null;
-    }
-
-    private function createUnresolvedEventIssue(ImportBatch $batch, string $context, SimpleXMLElement $node): void
-    {
-        $eventNo = $this->strAttrNullable($node, 'event') ?? $this->strAttrNullable($node, 'eventnumber');
-
-        $payload = [
-            'context' => $context,
-            'event_no' => $eventNo ?: null,
-        ];
-
-        $eventAncestor = $node->xpath('ancestor::EVENT[1]') ?: [];
-        $eventNode = $eventAncestor[0] ?? null;
-
-        if ($eventNode instanceof SimpleXMLElement) {
-            $payload['distance'] = $this->intAttrNullable($eventNode, 'distance');
-            $payload['stroke'] = $this->strAttrNullable($eventNode, 'stroke');
-            $payload['gender'] = $this->genderChar($this->strAttrNullable($eventNode, 'gender'));
-            $payload['round'] = $this->strAttrNullable($eventNode, 'round');
-            $payload['is_relay'] = $this->boolAttr($eventNode, ['relay', 'isrelay'])
-                ?? ! empty($eventNode->xpath('.//RELAY'));
-        }
-
-        $this->createIssue(
-            batch: $batch,
-            entityType: 'event',
-            entityKey: $eventNo ? ('event:'.$eventNo) : 'event:unresolved',
-            severity: 'warn',
-            message: 'Event could not be resolved (eventnumber missing/unknown and composite match failed).',
-            payload: $payload
-        );
-    }
-
-    private function resolveClubIdFromNode(SimpleXMLElement $node, array $clubIdBySourceKey): ?int
-    {
-        $clubNode = ($node->xpath('ancestor::CLUB[1]')[0] ?? null);
-
-        if ($clubNode instanceof SimpleXMLElement) {
-            $payload = $this->parseClubNode($clubNode);
-            $key = $payload['source_key'];
-
-            return $clubIdBySourceKey[$key] ?? null;
-        }
-
-        // Fallback (wenn kein CLUB ancestor vorhanden ist)
-        $name = $this->strAttrNullable($node, 'clubname');
-        $short = $this->strAttrNullable($node, 'clubshort');
-        $nation = $this->strAttrNullable($node, 'clubnation');
-
-        $key = $this->clubSourceKey($nation, $name, $short);
-
-        return $clubIdBySourceKey[$key] ?? null;
-    }
-
-    private function resolveAthleteIdFromNode(SimpleXMLElement $node, array $athleteIdBySourceKey): ?int
-    {
-        $athNode = ($node->xpath('ancestor::ATHLETE[1]')[0] ?? null);
-
-        if ($athNode instanceof SimpleXMLElement) {
-            $payload = $this->parseAthleteNode($athNode);
-            $key = $payload['source_key'];
-
-            return $athleteIdBySourceKey[$key] ?? null;
-        }
-
-        // Fallback (wenn kein ATHLETE ancestor vorhanden ist)
-        $ln = $this->strAttrNullable($node, 'lastname');
-        $fn = $this->strAttrNullable($node, 'firstname');
-        $by = $this->intAttrNullable($node, 'birthyear');
-
-        $key = $this->athleteSourceKey($ln, $fn, $by);
-
-        return $athleteIdBySourceKey[$key] ?? null;
-    }
-
-    private function insertEntry(?int $meetEventId, ?int $athleteId, ?int $clubId, ?string $seed): void
-    {
-        if (! $meetEventId || ! $athleteId) {
-            return;
-        }
-
-        DB::table('meet_entries')->updateOrInsert(
-            [
-                'meet_event_id' => $meetEventId,
-                'athlete_id' => $athleteId,
-            ],
-            [
-                'club_id' => $clubId,
-                'seed_time' => $seed,
-                'updated_at' => now(),
-                'created_at' => now(),
-            ]
-        );
-    }
-
-    private function insertResult(
-        ?int $meetEventId,
-        ?int $athleteId,
-        ?int $clubId,
-        ?string $time,
-        ?string $status,
-        ?int $rank,
-        ?int $points
-    ): ?int {
-        if (! $meetEventId || ! $athleteId) {
-            return null;
-        }
-
-        return DB::table('meet_results')->insertGetId([
-            'meet_event_id' => $meetEventId,
-            'athlete_id' => $athleteId,
-            'club_id' => $clubId,
-            'time' => $time,
-            'status' => $status,
-            'rank' => $rank,
-            'points' => $points,
-            'created_at' => now(),
-            'updated_at' => now(),
-        ]);
-    }
-
-    private function insertResultSplits(?int $resultId, SimpleXMLElement $resultNode): void
-    {
-        if (! $resultId) {
-            return;
-        }
-
-        $splits = $resultNode->xpath('.//SPLIT') ?: [];
-        foreach ($splits as $s) {
-            $distance = $this->intAttrNullable($s, 'distance');
-            $time = $this->strAttrNullable($s, 'time');
-
-            if ($distance === null || ! $time) {
-                continue;
-            }
-
-            DB::table('meet_result_splits')->insert([
-                'meet_result_id' => $resultId,
-                'distance' => $distance,
-                'time' => $time,
-                'created_at' => now(),
-                'updated_at' => now(),
-            ]);
-        }
-    }
-
-    public function abortBatch(ImportBatch $batch): void
-    {
-        // 1) Status
-        $batch->status = 'aborted';
-        $batch->save();
-
-        // 2) Child-Tabellen aufräumen
-        $batch->issues()->delete();
-        $batch->mappings()->delete();
-
-        // 3) XML löschen
-        $path = "imports/lenex/batch_{$batch->id}.xml";
-        Storage::disk('local')->delete($path);
-
-        // Optional: Summary/Metadaten zurücksetzen
-        // $batch->summary_json = null; $batch->save();
-    }
-
-    private function normUInt(?int $value, int $min = 0, int $max = 65535): ?int
-    {
-        if ($value === null) {
-            return null;
-        }
-        if ($value < $min || $value > $max) {
-            return null;
-        }
-
-        return $value;
     }
 
     private function applyMeetMetaFromXml(SimpleXMLElement $xml, Meet $meet): void
@@ -1735,23 +1369,528 @@ class LenexImportService
         }
     }
 
-    private function normLenexId(mixed $raw): ?int
+    private function importEntriesAndOrResults(ImportBatch $batch, SimpleXMLElement $xml, Meet $meet): void
     {
-        if ($raw === null) {
+        $eventIndexes = $this->buildEventIndexesForMeet($meet);
+
+        $swimStyleIdByKey = DB::table('swim_styles')
+            ->select('id', 'distance', 'stroke', 'relay_count')
+            ->get()
+            ->mapWithKeys(function ($r) {
+                $relay = $r->relay_count === null ? 'null' : (string) $r->relay_count;
+                $key = $relay.':'.(int) $r->distance.':'.$r->stroke;
+
+                return [$key => (int) $r->id];
+            })
+            ->all();
+
+        // meet_event_id => [distance, stroke, is_relay]
+        $eventStyleByMeetEventId = DB::table('meet_events')
+            ->join('meet_sessions', 'meet_sessions.id', '=', 'meet_events.meet_session_id')
+            ->where('meet_sessions.meet_id', $meet->id)
+            ->select('meet_events.id', 'meet_events.distance', 'meet_events.stroke', 'meet_events.is_relay')
+            ->get()
+            ->mapWithKeys(fn ($r) => [
+                (int) $r->id => [
+                    'distance' => $r->distance !== null ? (int) $r->distance : null,
+                    'stroke' => $r->stroke !== null ? (string) $r->stroke : null,
+                    'is_relay' => (bool) $r->is_relay,
+                ],
+            ])
+            ->all();
+
+        $clubIdBySourceKey = $this->resolveEntitiesForBatch($batch, 'club');
+        $athleteIdBySourceKey = $this->resolveEntitiesForBatch($batch, 'athlete');
+
+        if ($batch->type === 'entries') {
+            $entries = $xml->xpath('//ENTRY') ?: [];
+            foreach ($entries as $en) {
+                $meetEventId = $this->resolveMeetEventIdFromNode($en, $eventIndexes);
+                if (! $meetEventId) {
+                    $this->createUnresolvedEventIssue($batch, 'entry', $en);
+
+                    continue;
+                }
+
+                $style = $eventStyleByMeetEventId[$meetEventId] ?? null;
+
+                $swimStyleId = null;
+                if ($style && $style['distance'] && $style['stroke']) {
+                    $stroke = $this->mapLenexStrokeToSwimStroke($style['stroke']);
+                    $relayCount = $this->relayCountForSwimStyle((bool) $style['is_relay']);
+
+                    if ($stroke) {
+                        $key = ($relayCount === null ? 'null' : (string) $relayCount)
+                            .':'.(int) $style['distance']
+                            .':'.$stroke;
+
+                        $swimStyleId = $swimStyleIdByKey[$key] ?? null;
+                    }
+                }
+
+                $clubId = $this->resolveClubIdFromNode($en, $clubIdBySourceKey);
+                $athleteId = $this->resolveAthleteIdFromNode($en, $athleteIdBySourceKey);
+                $seedRaw = $this->strAttrNullable($en, 'entrytime') ?? $this->strAttrNullable($en, 'seed');
+                $seedCs = ParaSwim::parseLenexTimeToCentiseconds($seedRaw);
+
+                $this->insertEntry($meetEventId, $athleteId, $clubId, $seedRaw, $seedCs, $swimStyleId);
+
+            }
+        }
+
+        if ($batch->type === 'results') {
+            $results = $xml->xpath('//RESULT') ?: [];
+            foreach ($results as $r) {
+                $meetEventId = $this->resolveMeetEventIdFromNode($r, $eventIndexes);
+                if (! $meetEventId) {
+                    $this->createUnresolvedEventIssue($batch, 'result', $r);
+
+                    continue;
+                }
+
+                $clubId = $this->resolveClubIdFromNode($r, $clubIdBySourceKey);
+                $athleteId = $this->resolveAthleteIdFromNode($r, $athleteIdBySourceKey);
+
+                $time = $this->strAttrNullable($r, 'swimtime') ?? $this->strAttrNullable($r, 'time');
+                $status = $this->strAttrNullable($r, 'status');
+
+                $rank = $this->intAttrNullable($r, 'rank') ?? $this->intAttrNullable($r, 'place');
+                $points = $this->intAttrNullable($r, 'points');
+
+                $resultId = $this->insertResult(
+                    $meetEventId,
+                    $athleteId,
+                    $clubId,
+                    $time,
+                    $status,
+                    $rank,
+                    $points
+                );
+
+                $this->insertResultSplits($resultId, $r);
+            }
+        }
+    }
+
+    private function buildEventIndexesForMeet(Meet $meet): array
+    {
+        $meetEvents = DB::table('meet_events')
+            ->join('meet_sessions', 'meet_sessions.id', '=', 'meet_events.meet_session_id')
+            ->where('meet_sessions.meet_id', $meet->id)
+            ->select('meet_events.*')
+            ->get();
+
+        $byNo = $meetEvents
+            ->filter(fn ($e) => $e->event_no !== null)
+            ->keyBy(fn ($e) => (string) $e->event_no);
+
+        $byComposite = $meetEvents->mapWithKeys(function ($e) {
+            $key = $this->eventCompositeKey(
+                $e->distance !== null ? (int) $e->distance : null,
+                $e->stroke !== null ? (string) $e->stroke : null,
+                $e->gender !== null ? (string) $e->gender : null,
+                $e->round !== null ? (string) $e->round : null,
+                (bool) $e->is_relay
+            );
+
+            return $key ? [$key => $e] : [];
+        });
+
+        $byLenexEventId = [];
+        foreach ($meetEvents as $e) {
+            if ($e->lenex_event_id !== null) {
+                $byLenexEventId[(string) $e->lenex_event_id] = $e;
+            }
+        }
+
+        return [
+            'byNo' => $byNo,
+            'byComposite' => $byComposite,
+            'byLenexEventId' => $byLenexEventId,
+        ];
+    }
+
+    private function eventCompositeKey(
+        ?int $distance,
+        ?string $stroke,
+        ?string $gender,
+        ?string $round,
+        bool $isRelay
+    ): ?string {
+        if ($distance === null || ! $stroke) {
             return null;
         }
 
-        $s = trim((string) $raw);
+        return implode('|', [
+            (string) $distance,
+            strtoupper(trim($stroke)),
+            strtoupper(trim((string) $gender)),
+            strtolower(trim((string) $round)),
+            $isRelay ? 'relay' : 'individual',
+        ]);
+    }
+
+    private function resolveEntitiesForBatch(ImportBatch $batch, string $entityType): array
+    {
+        /** @var Collection<string, ImportMapping> $maps */
+        $maps = $batch->mappings()->where('entity_type', $entityType)->get()->keyBy('source_key');
+
+        /** @var Collection<string, ImportIssue> $issues */
+        $issues = $batch->issues()->where('entity_type', $entityType)->get()->keyBy('entity_key');
+
+        $idByKey = [];
+
+        foreach ($maps as $sourceKey => $map) {
+            if ($map->action === 'ignore') {
+                continue;
+            }
+
+            if ($map->action === 'link' && $map->target_id) {
+                $idByKey[$sourceKey] = $map->target_id;
+
+                continue;
+            }
+
+            $issue = $issues->get($sourceKey);
+            $payload = $issue?->payload_json ?? [];
+
+            if ($entityType === 'club') {
+
+                // Officials-only Clubs niemals anlegen
+                if (! empty($payload['officials_only_source'])) {
+                    continue;
+                }
+
+                $nationCode = trim((string) ($payload['nation'] ?? ''));
+                $nationId = $nationCode !== '' ? $this->resolveNationId($nationCode) : null;
+
+                // OPTIONALER TEIL: Warnung bei unbekanntem IOC
+                if ($nationCode !== '' && ! $nationId) {
+                    $this->createIssue(
+                        batch: $batch,
+                        entityType: 'club',
+                        entityKey: $sourceKey,
+                        severity: 'warn',
+                        message: "Unknown IOC nation code '{$nationCode}'. Club will be created without nation.",
+                        payload: $payload
+                    );
+                }
+
+                $club = Club::create([
+                    'nation_id' => $nationId, // kann null sein
+                    'name' => $payload['name'] ?? 'Club',
+                    'short_name' => $payload['short_name'] ?? null,
+                    'officials_only' => false,
+                ]);
+
+                $idByKey[$sourceKey] = $club->id;
+                $map->update([
+                    'action' => 'link',
+                    'target_id' => $club->id,
+                ]);
+            }
+
+            if ($entityType === 'athlete') {
+                $ath = Athlete::create([
+                    'last_name' => $payload['last_name'] ?? '—',
+                    'first_name' => $payload['first_name'] ?? null,
+                    'birth_year' => $payload['birth_year'] ?? null,
+                    'gender' => $payload['gender'] ?? null,
+                ]);
+
+                $idByKey[$sourceKey] = $ath->id;
+                $map->update(['action' => 'link', 'target_id' => $ath->id]);
+            }
+        }
+
+        return $idByKey;
+    }
+
+    private function resolveMeetEventIdFromNode(SimpleXMLElement $node, array $eventIndexes): ?int
+    {
+        $byLenex = $eventIndexes['byLenexEventId'] ?? [];
+        $byNo = $eventIndexes['byNo'] ?? [];
+        $byComposite = $eventIndexes['byComposite'] ?? [];
+
+        // 0) Best: eventid attribute (ENTRY hat das)
+        $lenexEventId = $this->strAttrNullable($node, 'eventid');
+        if ($lenexEventId !== null && isset($byLenex[$lenexEventId])) {
+            return $byLenex[$lenexEventId]->id;
+        }
+
+        // 1) Primary: event / eventnumber (already string|null)
+        $eventNo = $this->strAttrNullable($node, 'event') ?? $this->strAttrNullable($node, 'eventnumber');
+        if ($eventNo !== null && isset($byNo[$eventNo])) {
+            return $byNo[$eventNo]->id;
+        }
+
+        // 2) Fallback: nearest EVENT ancestor and composite match
+        $eventAncestor = $node->xpath('ancestor::EVENT[1]') ?: [];
+        $eventNode = $eventAncestor[0] ?? null;
+
+        if (! $eventNode instanceof SimpleXMLElement) {
+            return null;
+        }
+
+        $distance = $this->intAttrNullable($eventNode, 'distance');
+        $stroke = $this->strAttrNullable($eventNode, 'stroke');
+        $gender = $this->genderChar($this->strAttrNullable($eventNode, 'gender'));
+        $round = $this->strAttrNullable($eventNode, 'round');
+
+        $isRelay = $this->boolAttr($eventNode, ['relay', 'isrelay']);
+        $isRelay = $isRelay ?? (! empty($eventNode->xpath('.//RELAY')));
+
+        $key = $this->eventCompositeKey($distance, $stroke, $gender, $round, $isRelay);
+        if ($key !== null && isset($byComposite[$key])) {
+            return $byComposite[$key]->id;
+        }
+
+        return null;
+    }
+
+    private function createUnresolvedEventIssue(ImportBatch $batch, string $context, SimpleXMLElement $node): void
+    {
+        // LENEX references
+        $eventId = $this->strAttrNullable($node, 'eventid');
+        $eventNo = $this->strAttrNullable($node, 'event')
+            ?? $this->strAttrNullable($node, 'eventnumber');
+
+        $seed = $this->strAttrNullable($node, 'entrytime')
+            ?? $this->strAttrNullable($node, 'seed');
+
+        // Course aus ENTRY/MEETINFO
+        $course = null;
+        $meetInfo = $node->xpath('./*[local-name()="MEETINFO"]') ?: [];
+        $meetInfoNode = $meetInfo[0] ?? null;
+
+        if ($meetInfoNode instanceof SimpleXMLElement) {
+            $course = $this->strAttrNullable($meetInfoNode, 'course');
+        }
+
+        // ATHLETE ancestor (für ENTRY unter ATHLETE)
+        $athleteAncestor = $node->xpath('ancestor::*[local-name()="ATHLETE"][1]') ?: [];
+        $athleteNode = $athleteAncestor[0] ?? null;
+
+        $athleteId = $athleteNode instanceof SimpleXMLElement
+            ? $this->strAttrNullable($athleteNode, 'athleteid')
+            : null;
+
+        $payload = [
+            'context' => $context,
+            'event_id' => $eventId ?: null,
+            'event_no' => $eventNo ?: null,
+            'athlete_id' => $athleteId ?: null,
+            'seed' => $seed ?: null,
+            'course' => $course ?: null,
+        ];
+
+        // Composite-Fallback Infos (nur wenn EVENT ancestor existiert)
+        $eventAncestor = $node->xpath('ancestor::EVENT[1]') ?: [];
+        $eventNode = $eventAncestor[0] ?? null;
+
+        if ($eventNode instanceof SimpleXMLElement) {
+            $payload['distance'] = $this->intAttrNullable($eventNode, 'distance');
+            $payload['stroke'] = $this->strAttrNullable($eventNode, 'stroke');
+            $payload['gender'] = $this->genderChar(
+                $this->strAttrNullable($eventNode, 'gender')
+            );
+            $payload['round'] = $this->strAttrNullable($eventNode, 'round');
+            $payload['is_relay'] = $this->boolAttr($eventNode, ['relay', 'isrelay'])
+                ?? ! empty($eventNode->xpath('.//RELAY'));
+        }
+
+        $entityKey = $eventId
+            ? ('eventid:'.$eventId)
+            : ($eventNo ? ('event:'.$eventNo) : 'event:unresolved');
+
+        $this->createIssue(
+            batch: $batch,
+            entityType: 'event',
+            entityKey: $entityKey,
+            severity: 'warn',
+            message: 'Event could not be resolved (no match by eventid/eventnumber and no composite match).',
+            payload: $payload
+        );
+    }
+
+    private function resolveClubIdFromNode(SimpleXMLElement $node, array $clubIdBySourceKey): ?int
+    {
+        $clubNode = ($node->xpath('ancestor::CLUB[1]')[0] ?? null);
+
+        if ($clubNode instanceof SimpleXMLElement) {
+            $payload = $this->parseClubNode($clubNode);
+            $key = $payload['source_key'];
+
+            return $clubIdBySourceKey[$key] ?? null;
+        }
+
+        // Fallback (wenn kein CLUB ancestor vorhanden ist)
+        $name = $this->strAttrNullable($node, 'clubname');
+        $short = $this->strAttrNullable($node, 'clubshort');
+        $nation = $this->strAttrNullable($node, 'clubnation');
+
+        $key = $this->clubSourceKey($nation, $name, $short);
+
+        return $clubIdBySourceKey[$key] ?? null;
+    }
+
+    private function resolveAthleteIdFromNode(SimpleXMLElement $node, array $athleteIdBySourceKey): ?int
+    {
+        $athNode = ($node->xpath('ancestor::ATHLETE[1]')[0] ?? null);
+
+        if ($athNode instanceof SimpleXMLElement) {
+            $payload = $this->parseAthleteNode($athNode);
+            $key = $payload['source_key'];
+
+            return $athleteIdBySourceKey[$key] ?? null;
+        }
+
+        // Fallback (wenn kein ATHLETE ancestor vorhanden ist)
+        $ln = $this->strAttrNullable($node, 'lastname');
+        $fn = $this->strAttrNullable($node, 'firstname');
+        $by = $this->intAttrNullable($node, 'birthyear');
+
+        $key = $this->athleteSourceKey($ln, $fn, $by);
+
+        return $athleteIdBySourceKey[$key] ?? null;
+    }
+
+    private function insertEntry(
+        ?int $meetEventId,
+        ?int $athleteId,
+        ?int $clubId,
+        ?string $seedRaw,
+        ?int $seedCs,
+        ?int $swimStyleId
+    ): void {
+        if (! $meetEventId || ! $athleteId) {
+            return;
+        }
+
+        $now = now();
+
+        DB::table('meet_entries')->upsert(
+            [
+                [
+                    'meet_event_id' => $meetEventId,
+                    'athlete_id' => $athleteId,
+
+                    'club_id' => $clubId,
+                    'swim_style_id' => $swimStyleId,
+
+                    'seed_time' => $seedRaw,
+                    'seed_time_cs' => $seedCs,
+
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ],
+            ],
+            ['meet_event_id', 'athlete_id'],
+            ['club_id', 'swim_style_id', 'seed_time', 'seed_time_cs', 'updated_at']
+        );
+    }
+
+    private function insertResult(
+        ?int $meetEventId,
+        ?int $athleteId,
+        ?int $clubId,
+        ?string $time,
+        ?string $status,
+        ?int $rank,
+        ?int $points
+    ): ?int {
+        if (! $meetEventId || ! $athleteId) {
+            return null;
+        }
+
+        return DB::table('meet_results')->insertGetId([
+            'meet_event_id' => $meetEventId,
+            'athlete_id' => $athleteId,
+            'club_id' => $clubId,
+            'time' => $time,
+            'status' => $status,
+            'rank' => $rank,
+            'points' => $points,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
+    private function insertResultSplits(?int $resultId, SimpleXMLElement $resultNode): void
+    {
+        if (! $resultId) {
+            return;
+        }
+
+        $splits = $resultNode->xpath('.//SPLIT') ?: [];
+        foreach ($splits as $s) {
+            $distance = $this->intAttrNullable($s, 'distance');
+            $time = $this->strAttrNullable($s, 'time');
+
+            if ($distance === null || ! $time) {
+                continue;
+            }
+
+            DB::table('meet_result_splits')->insert([
+                'meet_result_id' => $resultId,
+                'distance' => $distance,
+                'time' => $time,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        }
+    }
+
+    public function abortBatch(ImportBatch $batch): void
+    {
+        // 1) Status
+        $batch->status = 'aborted';
+        $batch->save();
+
+        // 2) Child-Tabellen aufräumen
+        $batch->issues()->delete();
+        $batch->mappings()->delete();
+
+        // 3) XML löschen
+        $path = "imports/lenex/batch_{$batch->id}.xml";
+        Storage::disk('local')->delete($path);
+
+        // Optional: Summary/Metadaten zurücksetzen
+        // $batch->summary_json = null; $batch->save();
+    }
+
+    private function normUInt(?int $value, int $min = 0, int $max = 65535): ?int
+    {
+        if ($value === null) {
+            return null;
+        }
+        if ($value < $min || $value > $max) {
+            return null;
+        }
+
+        return $value;
+    }
+
+    private function mapLenexStrokeToSwimStroke(?string $lenexStroke): ?string
+    {
+        $s = strtoupper(trim((string) $lenexStroke));
         if ($s === '') {
             return null;
         }
 
-        if (! ctype_digit($s)) {
-            return null;
-        }
+        return match ($s) {
+            'FREE' => 'FR',
+            'BACK' => 'BK',
+            'BREAST' => 'BR',
+            'FLY' => 'FL',
+            'MEDLEY' => 'IM',
+            default => null,
+        };
+    }
 
-        $v = (int) $s;
-
-        return $v > 0 ? $v : null;
+    private function relayCountForSwimStyle(bool $isRelay): ?int
+    {
+        // in swim_styles: relay_count ist NULL bei Einzelbewerben, 4 bei Staffel
+        return $isRelay ? 4 : null;
     }
 }

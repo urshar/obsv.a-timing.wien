@@ -5,7 +5,7 @@ namespace Database\Seeders;
 use App\Models\ParaSwimStyle;
 use Illuminate\Database\Seeder;
 
-class ParaSwimStyleSeeder extends Seeder
+class SwimStyleSeeder extends Seeder
 {
     public function run(): void
     {

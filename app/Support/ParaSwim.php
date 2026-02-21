@@ -175,4 +175,55 @@ final class ParaSwim
 
         return $out;
     }
+
+    /**
+     * Converts LENEX time string to centiseconds (1/100s).
+     * Examples:
+     *  - "59.90" -> 5990
+     *  - "1:02.34" -> 6234
+     *  - "00:05:01.40" -> 30140
+     * Returns null for empty/NT/DNS/DNF/DQ/SCR/invalid.
+     */
+    public static function parseLenexTimeToCentiseconds(?string $raw): ?int
+    {
+        $raw = $raw !== null ? trim($raw) : '';
+        if ($raw === '') {
+            return null;
+        }
+
+        $u = strtoupper($raw);
+        if (in_array($u, ['NT', 'DNS', 'DNF', 'DQ', 'SCR'], true)) {
+            return null;
+        }
+
+        // decimal comma -> dot
+        $raw = str_replace(',', '.', $raw);
+
+        // HH:MM:SS(.cc) | MM:SS(.cc) | SS(.cc)
+        if (! preg_match('/^(?:(\d+):)?(?:(\d{1,2}):)?(\d{1,2})(?:\.(\d{1,2}))?$/', $raw, $m)) {
+            return null;
+        }
+
+        $h = ($m[1] ?? '') !== '' ? (int) $m[1] : 0;
+        $min = ($m[2] ?? '') !== '' ? (int) $m[2] : 0;
+        $sec = (int) ($m[3] ?? 0);
+
+        if ($min > 59 || $sec > 59) {
+            return null;
+        }
+
+        $frac = $m[4] ?? '';
+        if ($frac === '' || $frac === null) {
+            $cs = 0;
+        } else {
+            $cs = strlen($frac) === 1 ? ((int) $frac * 10) : (int) $frac; // ".4" => 40cs
+            if ($cs < 0 || $cs > 99) {
+                return null;
+            }
+        }
+
+        $total = (((($h * 60) + $min) * 60) + $sec) * 100 + $cs;
+
+        return $total >= 0 ? $total : null;
+    }
 }

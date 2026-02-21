@@ -23,7 +23,7 @@ class MeetEventRequest extends FormRequest
             'distance' => ['nullable', 'integer', 'min:1'],
 
             // stroke wird jetzt ParaSwimStyle.key
-            'stroke' => ['nullable', 'string', 'max:50', 'exists:para_swim_styles,key'],
+            'stroke' => ['nullable', 'string', 'max:50', 'exists:swim_styles,key'],
 
             'round' => ['nullable', 'string', 'max:50'],
             'is_relay' => ['nullable', 'boolean'],

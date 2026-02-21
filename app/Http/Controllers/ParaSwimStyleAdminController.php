@@ -24,14 +24,14 @@ class ParaSwimStyleAdminController extends Controller
                         ->orWhere('abbreviation', 'like', "%{$q}%");
                 });
             })
-            ->when($stroke !== '', fn ($query) => $query->where('stroke', $stroke))
-            ->when(! empty($distance), fn ($query) => $query->where('distance', (int) $distance))
+            ->when($stroke !== '', fn($query) => $query->where('stroke', $stroke))
+            ->when(!empty($distance), fn($query) => $query->where('distance', (int) $distance))
             ->when($relay === 'individual', function ($query) {
                 $query->where(function ($qq) {
                     $qq->whereNull('relay_count')->orWhere('relay_count', '<=', 1);
                 });
             })
-            ->when($relay === 'relay', fn ($query) => $query->whereNotNull('relay_count')->where('relay_count', '>', 1))
+            ->when($relay === 'relay', fn($query) => $query->whereNotNull('relay_count')->where('relay_count', '>', 1))
             ->orderByRaw('COALESCE(relay_count, 1) ASC')
             ->orderBy('distance')
             ->orderBy('stroke')
@@ -97,33 +97,33 @@ class ParaSwimStyleAdminController extends Controller
         return view('para-swim-styles.create');
     }
 
-    public function edit(ParaSwimStyle $para_swim_style)
+    public function edit(ParaSwimStyle $swim_style)
     {
         return view('para-swim-styles.edit', [
-            'style' => $para_swim_style,
+            'style' => $swim_style,
         ]);
     }
 
-    public function update(Request $request, ParaSwimStyle $para_swim_style)
+    public function update(Request $request, ParaSwimStyle $swim_style)
     {
         $data = $this->validatedData($request, isUpdate: true);
 
-        $distance = $data['distance'] ?? $para_swim_style->distance;
-        $stroke = $data['stroke'] ?? $para_swim_style->stroke;
-        $relay = array_key_exists('relay_count', $data) ? $data['relay_count'] : $para_swim_style->relay_count;
+        $distance = $data['distance'] ?? $swim_style->distance;
+        $stroke = $data['stroke'] ?? $swim_style->stroke;
+        $relay = array_key_exists('relay_count', $data) ? $data['relay_count'] : $swim_style->relay_count;
 
         $data['key'] = ParaSwimStyle::makeKey($distance, $stroke, $relay);
 
-        $para_swim_style->update($data);
+        $swim_style->update($data);
 
         return redirect()
             ->route('para-swim-styles.index')
             ->with('status', 'Para swim style updated.');
     }
 
-    public function destroy(ParaSwimStyle $para_swim_style)
+    public function destroy(ParaSwimStyle $swim_style)
     {
-        $para_swim_style->delete();
+        $swim_style->delete();
 
         return redirect()
             ->route('para-swim-styles.index')

@@ -5,9 +5,12 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 
+/**
+ * @property mixed $distance
+ */
 class ParaSwimStyle extends Model
 {
-    protected $table = 'para_swim_styles';
+    protected $table = 'swim_styles';
 
     protected $fillable = [
         'key',
@@ -50,7 +53,7 @@ class ParaSwimStyle extends Model
     ): string {
         $stroke = strtoupper($stroke);
 
-        if (! is_null($relayCount) && $relayCount > 1) {
+        if (!is_null($relayCount) && $relayCount > 1) {
             return "{$relayCount}x{$distance}:{$stroke}";
         }
 
@@ -99,7 +102,7 @@ class ParaSwimStyle extends Model
      */
     public function isRelay(): bool
     {
-        return ! is_null($this->relay_count) && $this->relay_count > 1;
+        return !is_null($this->relay_count) && $this->relay_count > 1;
     }
 
     /**
