@@ -9,6 +9,7 @@ use App\Models\ImportBatch;
 use App\Models\ImportIssue;
 use App\Models\ImportMapping;
 use App\Models\Meet;
+use App\Services\AthleteSportclassSyncService;
 use App\Support\Concerns\DeletesInChunks;
 use App\Support\Concerns\LenexXmlValueHelpers;
 use App\Support\ParaSwim;
@@ -136,6 +137,10 @@ class LenexImportService
         $from = $this->strAttrNullable($meetNode, 'from') ?? $this->strAttrNullable($meetNode, 'datefrom');
         $to = $this->strAttrNullable($meetNode, 'to') ?? $this->strAttrNullable($meetNode, 'dateto');
 
+        if (! $to && $from) {
+            $to = $from;
+        }
+
         // Wenn "from" fehlt, nimm "date"
         if (! $from && $date) {
             $from = $date;
@@ -198,13 +203,20 @@ class LenexImportService
             suggestions: $suggestions
         );
 
-        ImportMapping::create([
-            'import_batch_id' => $batch->id,
-            'entity_type' => 'meet',
-            'source_key' => 'meet',
-            'action' => 'create',
-            'target_id' => null,
-        ]);
+        $this->ensurePreviewMapping(
+            batch: $batch,
+            entityType: 'meet',
+            sourceKey: 'meet',
+            desiredDecision: function () use ($suggestions) {
+
+                // Meet darf etwas toleranter sein
+                $targetId = $this->autoLinkTargetId($suggestions, minScore: 0.92, minMargin: 0.03);
+
+                return $targetId
+                    ? ['action' => 'link', 'target_id' => $targetId]
+                    : ['action' => 'create', 'target_id' => null];
+            }
+        );
     }
 
     private function suggestMeets(array $meetInfo): array
@@ -213,20 +225,46 @@ class LenexImportService
         $from = $meetInfo['from'] ?? null;
         $to = $meetInfo['to'] ?? null;
 
-        if ($name === '' || ! $from || ! $to) {
+        if ($name === '' || ! $from) {
             return [];
         }
 
+        // wenn to fehlt: eintägig
+        if (! $to) {
+            $to = $from;
+        }
+
+        // Date-Fenster: +/- 7 Tage rund um from/to (robust gegen kleine Abweichungen)
+        $fromC = \Carbon\Carbon::parse($from)->subDays(7)->toDateString();
+        $toC = \Carbon\Carbon::parse($to)->addDays(7)->toDateString();
+
+        // Name nicht zu strikt: nur ein Teilstring als LIKE-Needle
+        $needle = mb_substr($name, 0, 25);
+
         $res = Meet::query()
-            ->where('name', 'like', '%'.$name.'%')
-            ->where(function ($w) use ($from, $to) {
-                $w->whereBetween('start_date', [$from, $to])
-                    ->orWhereBetween('end_date', [$from, $to]);
+            ->where('name', 'like', '%'.$needle.'%')
+            ->where(function ($w) use ($fromC, $toC) {
+                $w->whereBetween('start_date', [$fromC, $toC])
+                    ->orWhereBetween('end_date', [$fromC, $toC]);
             })
             ->limit(10)
             ->get();
 
-        return $this->mapSuggestions($res, fn ($m) => "#{$m->id} {$m->name} ({$m->start_date} → {$m->end_date})");
+        // Score berechnen + sortieren
+        return $res->map(function ($m) use ($name) {
+            $score = $this->similarityScore($name, (string) $m->name);
+
+            $range = $this->fmtDateRange($m->start_date, $m->end_date);
+
+            return [
+                'id' => $m->id,
+                'label' => "#{$m->id} {$m->name}".($range !== '' ? " ({$range})" : ''),
+                'score' => $score,
+            ];
+        })
+            ->sortByDesc('score')
+            ->values()
+            ->all();
     }
 
     /**
@@ -344,13 +382,22 @@ class LenexImportService
                 suggestions: $suggestions
             );
 
-            ImportMapping::create([
-                'import_batch_id' => $batch->id,
-                'entity_type' => 'club',
-                'source_key' => $club['source_key'],
-                'action' => $isOfficialsOnly ? 'ignore' : 'create',
-                'target_id' => null,
-            ]);
+            $this->ensurePreviewMapping(
+                batch: $batch,
+                entityType: 'club',
+                sourceKey: $club['source_key'],
+                desiredDecision: function () use ($isOfficialsOnly, $suggestions) {
+                    if ($isOfficialsOnly) {
+                        return ['action' => 'ignore', 'target_id' => null];
+                    }
+
+                    $targetId = $this->autoLinkTargetId($suggestions, minScore: 0.93, minMargin: 0.05);
+
+                    return $targetId
+                        ? ['action' => 'link', 'target_id' => $targetId]
+                        : ['action' => 'create', 'target_id' => null];
+                }
+            );
 
             $count++;
         }
@@ -418,6 +465,12 @@ class LenexImportService
         return array_values($unique);
     }
 
+    /*
+    |--------------------------------------------------------------------------
+    | Meet + Facility mapping
+    |--------------------------------------------------------------------------
+    */
+
     private function suggestClubs(array $club): array
     {
         $name = trim((string) ($club['name'] ?? ''));
@@ -430,7 +483,6 @@ class LenexImportService
 
         $q = Club::query();
 
-        // IMPORTANT: Club uses nation_id (FK), not nation (string)
         $nationId = $nationCodeOrName !== '' ? $this->resolveNationId($nationCodeOrName) : null;
         if ($nationId) {
             $q->where('nation_id', $nationId);
@@ -445,17 +497,34 @@ class LenexImportService
             }
         });
 
-        $res = $q->limit(10)->get();
+        $models = $q->limit(10)->get();
 
-        return $this->mapSuggestions(
-            $res,
-            fn ($c) => "#{$c->id} {$c->name}".($c->short_name ? " ({$c->short_name})" : '')
-        );
+        return $models->map(function ($c) use ($name, $short) {
+
+            $scoreName = $name !== ''
+                ? $this->similarityScore($name, (string) $c->name)
+                : 0;
+
+            $scoreShort = $short !== ''
+                ? $this->similarityScore($short, (string) $c->short_name)
+                : 0;
+
+            $score = max($scoreName, $scoreShort * 0.95);
+
+            return [
+                'id' => $c->id,
+                'label' => "#{$c->id} {$c->name}".($c->short_name ? " ({$c->short_name})" : ''),
+                'score' => $score,
+            ];
+        })
+            ->sortByDesc('score')
+            ->values()
+            ->all();
     }
 
     /*
     |--------------------------------------------------------------------------
-    | Meet + Facility mapping
+    | Structure import
     |--------------------------------------------------------------------------
     */
 
@@ -475,6 +544,120 @@ class LenexImportService
             ->first();
 
         return $row?->id ? (int) $row->id : null;
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Entries / Results import with event fallback
+    |--------------------------------------------------------------------------
+    */
+
+    private function similarityScore(string $a, string $b): float
+    {
+        $a = $this->normText($a);
+        $b = $this->normText($b);
+
+        if ($a === '' || $b === '') {
+            return 0.0;
+        }
+        if ($a === $b) {
+            return 1.0;
+        }
+
+        // similar_text returns percent (0..100)
+        similar_text($a, $b, $pct);
+
+        return max(0.0, min(1.0, $pct / 100.0));
+    }
+
+    private function normText(string $s): string
+    {
+        $s = mb_strtolower(trim($s));
+        $s = preg_replace('/\s+/', ' ', $s);
+
+        return $s ?? '';
+    }
+
+    /**
+     * Ensure there is a mapping for this entity in preview.
+     * - legt an, wenn noch keins existiert
+     * - updatet "create + null" auf "link + id", wenn Auto-Link sicher ist
+     * - überschreibt niemals manuelle Entscheidungen
+     *
+     * @param  callable  $desiredDecision  fn(): array{action:string, target_id:?int}
+     */
+    private function ensurePreviewMapping(
+        ImportBatch $batch,
+        string $entityType,
+        string $sourceKey,
+        callable $desiredDecision
+    ): void {
+        $mapping = ImportMapping::query()
+            ->where('import_batch_id', $batch->id)
+            ->where('entity_type', $entityType)
+            ->where('source_key', $sourceKey)
+            ->first();
+
+        $decision = $desiredDecision(); // ['action' => 'create|link|ignore', 'target_id' => ?int]
+
+        if (! $mapping) {
+            ImportMapping::create([
+                'import_batch_id' => $batch->id,
+                'entity_type' => $entityType,
+                'source_key' => $sourceKey,
+                'action' => $decision['action'],
+                'target_id' => $decision['target_id'],
+            ]);
+
+            return;
+        }
+
+        $isDefaultCreate = ($mapping->action === 'create' && $mapping->target_id === null);
+
+        // nur Default-"create" darf auf "link" hochgestuft werden
+        if ($isDefaultCreate && $decision['action'] === 'link' && $decision['target_id']) {
+            $mapping->action = 'link';
+            $mapping->target_id = (int) $decision['target_id'];
+            $mapping->save();
+        }
+    }
+
+    /**
+     * Decide whether a suggestion list warrants auto-linking.
+     *
+     * @param  array<int, array{id:int, label:string, score?:float}>  $suggestions
+     */
+    private function autoLinkTargetId(array $suggestions, float $minScore, float $minMargin): ?int
+    {
+        if (empty($suggestions)) {
+            return null;
+        }
+
+        $bestScore = (float) ($suggestions[0]['score'] ?? 0.0);
+        $secondScore = (float) ($suggestions[1]['score'] ?? 0.0);
+
+        $bestId = isset($suggestions[0]['id']) ? (int) $suggestions[0]['id'] : null;
+
+        // 1) Normalfall: klarer Sieger
+        if ($bestId && $bestScore >= $minScore && ($bestScore - $secondScore) >= $minMargin) {
+            return $bestId;
+        }
+
+        // 2) Tie-Fall: mehrere perfekte Treffer (doppelte Clubs in DB)
+        if ($bestScore >= 0.999) {
+            $tied = array_filter($suggestions, function ($s) use ($bestScore) {
+                return isset($s['id']) && ((float) ($s['score'] ?? 0.0)) >= ($bestScore - 1e-6);
+            });
+
+            if (! empty($tied)) {
+                $ids = array_map(fn ($s) => (int) $s['id'], $tied);
+                sort($ids);
+
+                return $ids[0] ?? null;   // kleinste ID = kanonischer Datensatz
+            }
+        }
+
+        return null;
     }
 
     private function buildAthleteIssues(ImportBatch $batch, SimpleXMLElement $xml): array
@@ -497,13 +680,18 @@ class LenexImportService
                 suggestions: $suggestions
             );
 
-            ImportMapping::create([
-                'import_batch_id' => $batch->id,
-                'entity_type' => 'athlete',
-                'source_key' => $ath['source_key'],
-                'action' => 'create',
-                'target_id' => null,
-            ]);
+            $this->ensurePreviewMapping(
+                batch: $batch,
+                entityType: 'athlete',
+                sourceKey: $ath['source_key'],
+                desiredDecision: function () use ($suggestions) {
+                    $targetId = $this->autoLinkTargetId($suggestions, minScore: 0.97, minMargin: 0.05);
+
+                    return $targetId
+                        ? ['action' => 'link', 'target_id' => $targetId]
+                        : ['action' => 'create', 'target_id' => null];
+                }
+            );
 
             $count++;
         }
@@ -513,7 +701,7 @@ class LenexImportService
 
     /*
     |--------------------------------------------------------------------------
-    | Structure import
+    | Entity resolution (mappings)
     |--------------------------------------------------------------------------
     */
 
@@ -528,12 +716,6 @@ class LenexImportService
 
         return $this->dedupeBySourceKey($athletes);
     }
-
-    /*
-    |--------------------------------------------------------------------------
-    | Entries / Results import with event fallback
-    |--------------------------------------------------------------------------
-    */
 
     /**
      * Parse an ATHLETE node into a normalized payload (for preview + source_key).
@@ -560,14 +742,36 @@ class LenexImportService
         $gender = $this->strAttrNullable($athNode, 'gender')
             ?? LenexXml::text($athNode->GENDER ?? null);
 
+        $lenexAthleteId = $this->strAttrNullable($athNode, 'athleteid');
+
+        // HANDICAP (Para-Swim Sportclass)
+        $handicapNode = $athNode->HANDICAP[0] ?? null;
+        $handicap = null;
+
+        if ($handicapNode instanceof SimpleXMLElement) {
+            $free = $this->strAttrNullable($handicapNode, 'free');
+            $breast = $this->strAttrNullable($handicapNode, 'breast');
+            $medley = $this->strAttrNullable($handicapNode, 'medley');
+            $exc = $this->strAttrNullable($handicapNode, 'exception');
+
+            $handicap = [
+                'free' => ($free !== null && trim($free) !== '') ? (int) $free : null,
+                'breast' => ($breast !== null && trim($breast) !== '') ? (int) $breast : null,
+                'medley' => ($medley !== null && trim($medley) !== '') ? (int) $medley : null,
+                'exception' => ($exc !== null && trim($exc) !== '') ? trim($exc) : null,
+            ];
+        }
+
         $sourceKey = $this->athleteSourceKey($lastName, $firstName, $birthYear);
 
         return [
             'source_key' => $sourceKey,
+            'lenex_athlete_id' => $lenexAthleteId,   // ✅ neu
             'last_name' => $lastName,
             'first_name' => $firstName,
             'birth_year' => $birthYear,
             'gender' => $gender,
+            'handicap' => $handicap,                 // ✅ neu
         ];
     }
 
@@ -583,6 +787,12 @@ class LenexImportService
             .'|'
             .($by ?? 0);
     }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Writes
+    |--------------------------------------------------------------------------
+    */
 
     private function suggestAthletes(array $ath): array
     {
@@ -602,12 +812,29 @@ class LenexImportService
             $q->where('first_name', 'like', '%'.$fn.'%');
         }
 
-        $res = $q->limit(10)->get();
+        $models = $q->limit(10)->get();
 
-        return $this->mapSuggestions(
-            $res,
-            fn ($a) => "#{$a->id} {$a->last_name} {$a->first_name} ({$a->birth_year})"
-        );
+        return $models->map(function ($a) use ($ln, $fn) {
+
+            $scoreLast = $this->similarityScore($ln, (string) $a->last_name);
+
+            // Wenn first_name im Lenex fehlt, soll es nicht gegen uns zählen
+            $scoreFirst = $fn !== ''
+                ? $this->similarityScore($fn, (string) $a->first_name)
+                : 1.0;
+
+            // birth_year match ist bereits per Query fix; wir lassen es nur als "stabiler" Faktor drin
+            $score = ($scoreLast * 0.75) + ($scoreFirst * 0.25);
+
+            return [
+                'id' => $a->id,
+                'label' => "#{$a->id} {$a->last_name} {$a->first_name} ({$a->birth_year})",
+                'score' => $score,
+            ];
+        })
+            ->sortByDesc('score')
+            ->values()
+            ->all();
     }
 
     private function countRelaysInXml(SimpleXMLElement $xml): int
@@ -621,12 +848,6 @@ class LenexImportService
     {
         return app(LenexStructureExtractor::class)->extract($xml);
     }
-
-    /*
-    |--------------------------------------------------------------------------
-    | Entity resolution (mappings)
-    |--------------------------------------------------------------------------
-    */
 
     /**
      * @throws Throwable
@@ -701,6 +922,12 @@ class LenexImportService
         });
     }
 
+    /*
+    |--------------------------------------------------------------------------
+    | Small helpers (DRY)
+    |--------------------------------------------------------------------------
+    */
+
     private function resolveOrCreateMeet(ImportBatch $batch, SimpleXMLElement $xml): Meet
     {
         $mapping = $batch->mappings()
@@ -759,12 +986,6 @@ class LenexImportService
 
         DB::table('meet_age_groups')->where('meet_id', $meet->id)->delete();
     }
-
-    /*
-    |--------------------------------------------------------------------------
-    | Writes
-    |--------------------------------------------------------------------------
-    */
 
     private function applyFacilityToMeetIfMapped(ImportBatch $batch, Meet $meet): void
     {
@@ -1173,12 +1394,6 @@ class LenexImportService
         return $v > 0 ? $v : null;
     }
 
-    /*
-    |--------------------------------------------------------------------------
-    | Small helpers (DRY)
-    |--------------------------------------------------------------------------
-    */
-
     private function normGender(?string $value): ?string
     {
         if ($value === null) {
@@ -1369,6 +1584,9 @@ class LenexImportService
         }
     }
 
+    /**
+     * @throws Throwable
+     */
     private function importEntriesAndOrResults(ImportBatch $batch, SimpleXMLElement $xml, Meet $meet): void
     {
         $eventIndexes = $this->buildEventIndexesForMeet($meet);
@@ -1401,6 +1619,8 @@ class LenexImportService
 
         $clubIdBySourceKey = $this->resolveEntitiesForBatch($batch, 'club');
         $athleteIdBySourceKey = $this->resolveEntitiesForBatch($batch, 'athlete');
+
+        $this->syncAthleteSportClassesFromBatch($batch, $meet, $athleteIdBySourceKey);
 
         if ($batch->type === 'entries') {
             $entries = $xml->xpath('//ENTRY') ?: [];
@@ -1713,6 +1933,29 @@ class LenexImportService
         );
     }
 
+    private function mapLenexStrokeToSwimStroke(?string $lenexStroke): ?string
+    {
+        $s = strtoupper(trim((string) $lenexStroke));
+        if ($s === '') {
+            return null;
+        }
+
+        return match ($s) {
+            'FREE' => 'FR',
+            'BACK' => 'BK',
+            'BREAST' => 'BR',
+            'FLY' => 'FL',
+            'MEDLEY' => 'IM',
+            default => null,
+        };
+    }
+
+    private function relayCountForSwimStyle(bool $isRelay): ?int
+    {
+        // in swim_styles: relay_count ist NULL bei Einzelbewerben, 4 bei Staffel
+        return $isRelay ? 4 : null;
+    }
+
     private function resolveClubIdFromNode(SimpleXMLElement $node, array $clubIdBySourceKey): ?int
     {
         $clubNode = ($node->xpath('ancestor::CLUB[1]')[0] ?? null);
@@ -1871,26 +2114,80 @@ class LenexImportService
         return $value;
     }
 
-    private function mapLenexStrokeToSwimStroke(?string $lenexStroke): ?string
+    private function fmtDate(?string $date): ?string
     {
-        $s = strtoupper(trim((string) $lenexStroke));
-        if ($s === '') {
+        if (! $date) {
             return null;
         }
 
-        return match ($s) {
-            'FREE' => 'FR',
-            'BACK' => 'BK',
-            'BREAST' => 'BR',
-            'FLY' => 'FL',
-            'MEDLEY' => 'IM',
-            default => null,
-        };
+        // Akzeptiert "2026-03-07", "2026-03-07 00:00:00", Carbon etc.
+        try {
+            return \Carbon\Carbon::parse($date)->toDateString(); // => YYYY-MM-DD
+        } catch (Throwable $e) {
+            // Fallback: wenn parse nicht geht, wenigstens die Zeit abschneiden
+            return trim(explode(' ', trim($date))[0]);
+        }
     }
 
-    private function relayCountForSwimStyle(bool $isRelay): ?int
+    private function fmtDateRange(?string $from, ?string $to): string
     {
-        // in swim_styles: relay_count ist NULL bei Einzelbewerben, 4 bei Staffel
-        return $isRelay ? 4 : null;
+        $f = $this->fmtDate($from);
+        $t = $this->fmtDate($to);
+
+        if ($f && $t) {
+            return ($f === $t) ? $f : "{$f} → {$t}";
+        }
+
+        return $f ?: ($t ?: '');
+    }
+
+    /**
+     * @throws Throwable
+     */
+    private function syncAthleteSportClassesFromBatch(
+        ImportBatch $batch,
+        Meet $meet,
+        array $athleteIdBySourceKey
+    ): void {
+        $svc = app(AthleteSportclassSyncService::class);
+
+        // effective date: meet start_date (fallback today)
+        $effective = $meet->start_date ?: now()->toDateString();
+        $meetId = $meet->id;
+
+        // Alle Athlete-Issues holen (Payload enthält handicap + lenex_athlete_id)
+        $issues = $batch->issues()
+            ->where('entity_type', 'athlete')
+            ->get();
+
+        foreach ($issues as $issue) {
+            $sourceKey = (string) $issue->entity_key;
+            $athleteId = $athleteIdBySourceKey[$sourceKey] ?? null;
+            if (! $athleteId) {
+                continue;
+            }
+
+            $payload = $issue->payload_json ?? [];
+            $handicap = $payload['handicap'] ?? null;
+
+            if (! is_array($handicap)) {
+                continue;
+            }
+
+            $sourceRef = $payload['lenex_athlete_id'] ?? null;
+            $exc = $handicap['exception'] ?? null;
+
+            $athlete = Athlete::find($athleteId);
+            if (! $athlete) {
+                continue;
+            }
+
+            $svc->syncDiscipline($athlete, 'S', ! empty($handicap['free']) ? 'S'.$handicap['free'] : null, $effective,
+                'lenex', $sourceRef, $meetId, $exc);
+            $svc->syncDiscipline($athlete, 'SB', ! empty($handicap['breast']) ? 'SB'.$handicap['breast'] : null,
+                $effective, 'lenex', $sourceRef, $meetId, $exc);
+            $svc->syncDiscipline($athlete, 'SM', ! empty($handicap['medley']) ? 'SM'.$handicap['medley'] : null,
+                $effective, 'lenex', $sourceRef, $meetId, $exc);
+        }
     }
 }

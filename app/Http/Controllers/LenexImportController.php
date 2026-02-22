@@ -51,6 +51,13 @@ class LenexImportController extends Controller
         $issues = $batch->issues()->orderBy('severity', 'desc')->get()->groupBy('entity_type');
         $mappings = $batch->mappings()->get()->groupBy('entity_type');
 
+        //        dd(
+        //            'club_issue', $issues->get('club')?->first(),
+        //            'club_mapping', $mappings->get('club')?->first(),
+        //            'athlete_issue', $issues->get('athlete')?->first(),
+        //            'athlete_mapping', $mappings->get('athlete')?->first(),
+        //        );
+
         return view('imports.lenex.preview', compact('batch', 'issues', 'mappings'));
     }
 
